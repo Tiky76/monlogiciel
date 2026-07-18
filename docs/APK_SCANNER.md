@@ -85,6 +85,10 @@ Pour un usage reel avec plusieurs telephones, preferer une adresse HTTPS publiqu
    fichiers.
 4. Si l'erreur continue, generer une nouvelle version APK depuis GitHub Actions.
 
-La version 1.1 utilise l'identifiant Android
+La version 1.2 utilise l'identifiant Android
 `com.ticketbus.billetterie.scanner` pour eviter les conflits avec les anciens
 essais signes differemment.
+
+La generation GitHub produit une APK `release` signee avec la cle Android de
+debug du workflow afin d'etre acceptee plus facilement par les telephones qui
+refusent les builds purement `debug`.

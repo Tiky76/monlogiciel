@@ -3,6 +3,7 @@ package com.billetterie.scanner;
 import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -21,7 +22,8 @@ public class MainActivity extends Activity {
         webView = new WebView(this);
         setContentView(webView);
         configureWebView();
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
         }
         webView.loadUrl(getString(R.string.scanner_url));
@@ -36,7 +38,8 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                        || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                     request.grant(request.getResources());
                 } else {
                     pendingPermissionRequest = request;

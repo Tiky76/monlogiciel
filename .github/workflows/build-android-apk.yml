@@ -67,15 +67,15 @@ jobs:
           SERVER_URL: ${{ github.event.inputs.server_url }}
 
       - name: Compiler l'APK
-        run: gradle -p android-scanner assembleDebug
+        run: gradle -p android-scanner assembleRelease
 
       - name: Renommer l'APK
         run: |
           mkdir -p build-output
-          cp android-scanner/app/build/outputs/apk/debug/app-debug.apk build-output/scanner-billetterie-debug.apk
+          cp android-scanner/app/build/outputs/apk/release/app-release.apk build-output/Scanner-TicketBus-v1.2.apk
 
       - name: Publier l'APK en artifact
         uses: actions/upload-artifact@v4
         with:
           name: scanner-billetterie-apk
-          path: build-output/scanner-billetterie-debug.apk
+          path: build-output/Scanner-TicketBus-v1.2.apk
