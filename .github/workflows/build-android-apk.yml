@@ -6,7 +6,7 @@ on:
       server_url:
         description: "Adresse de la page scanner du logiciel web"
         required: true
-        default: "http://192.168.1.20:5000/scanner"
+        default: "http://192.168.1.101:5000/scanner"
   push:
     branches:
       - main
@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           if [ -z "$SERVER_URL" ]; then
-            export SERVER_URL="http://192.168.1.20:5000/scanner"
+            export SERVER_URL="http://192.168.1.101:5000/scanner"
           fi
           python - <<'PY'
           from pathlib import Path
@@ -58,7 +58,7 @@ jobs:
           )
           text = path.read_text(encoding="utf-8")
           text = text.replace(
-              '<string name="scanner_url">http://10.0.2.2:5000/scanner</string>',
+              '<string name="scanner_url">http://192.168.1.101:5000/scanner</string>',
               f'<string name="scanner_url">{escaped}</string>',
           )
           path.write_text(text, encoding="utf-8")

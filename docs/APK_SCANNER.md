@@ -16,12 +16,12 @@ l'embarquement.
 ## Configurer l'adresse du serveur
 
 Dans `android-scanner/app/src/main/res/values/strings.xml`, remplacer
-`http://10.0.2.2:5000/scanner` par l'adresse reelle du serveur.
+`http://192.168.1.101:5000/scanner` par l'adresse reelle du serveur.
 
 Exemples:
 
 ```text
-http://192.168.1.20:5000/scanner
+http://192.168.1.101:5000/scanner
 https://billetterie.example.com/scanner
 ```
 
@@ -71,7 +71,7 @@ Apres avoir envoye le projet sur GitHub:
 Exemple de `server_url`:
 
 ```text
-http://192.168.1.20:5000/scanner
+http://192.168.1.101:5000/scanner
 ```
 
 Pour un usage reel avec plusieurs telephones, preferer une adresse HTTPS publique.
