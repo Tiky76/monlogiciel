@@ -1,0 +1,23 @@
+{# Page d'accueil : elle affiche les indicateurs et les dernières réservations. #}
+{% extends 'base.html' %}
+{% block title %}Tableau de bord — Billetterie{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div><h1>Tableau de bord</h1><p>Vue d’ensemble de la billetterie.</p></div>
+  <a class="button" href="{{ url_for('new_reservation') }}">Créer une réservation</a>
+</div>
+<section class="stats dashboard-stats">
+  <article><span>Billets aujourd'hui</span><strong>{{ stats.tickets_today }}</strong><small>Ventes enregistrées</small></article>
+  <article><span>Recettes du jour</span><strong>{{ '%.0f'|format(stats.revenue_today) }}</strong><small>{{ app_settings.currency }}</small></article>
+  <article><span>Départs aujourd'hui</span><strong>{{ stats.trips_today }}</strong><small>Trajets programmés</small></article>
+  <article><span>En attente</span><strong>{{ stats.pending }}</strong><small>Paiements à encaisser</small></article>
+  <article><span>Taux de remplissage</span><strong>{{ stats.fill_rate or 0 }}%</strong><small>Prochains trajets</small></article>
+  <article><span>Billets annulés</span><strong>{{ stats.cancelled }}</strong><small>Historique complet</small></article>
+</section>
+<div class="dashboard-grid">
+  <section class="card"><div class="section-heading"><div><h2>Ventes des 7 derniers jours</h2><p>Nombre de billets créés chaque jour.</p></div></div><div class="bar-chart">{% for day in sales %}<div class="bar-column"><strong>{{ day.tickets }}</strong><div class="bar-track"><span style="height:{{ (day.tickets * 100 / max_daily_tickets)|round }}%"></span></div><small>{{ day.day[8:10] }}/{{ day.day[5:7] }}</small></div>{% endfor %}</div></section>
+  <section class="card"><div class="section-heading"><div><h2>Trajets les plus demandés</h2><p>Occupation et recettes estimées.</p></div></div><div class="popular-list">{% for trip in popular_trips %}<article><div><strong>{{ trip.origin }} → {{ trip.destination }}</strong><small>{{ trip.departure_at|datefr }}</small></div><div class="trip-metrics"><span>{{ trip.sold }}/{{ trip.seat_count }} vendus</span><strong>{{ '%.0f'|format(trip.revenue) }} {{ app_settings.currency }}</strong></div><div class="progress"><span style="width:{{ (trip.sold * 100 / trip.seat_count)|round }}%"></span></div></article>{% else %}<p class="empty">Aucun trajet disponible.</p>{% endfor %}</div></section>
+</div>
+<!-- Le tableau est mutualisé avec la page des réservations. -->
+<section class="card recent-card"><div class="section-heading"><h2>Dernières réservations</h2><a href="{{ url_for('reservations') }}">Tout afficher</a></div>{% include 'reservation_table.html' %}</section>
+{% endblock %}

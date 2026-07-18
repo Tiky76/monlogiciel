@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}Créer un compte — Billetterie{% endblock %}
+{% block content %}
+<section class="card auth-card">
+  <h1>Créer un compte</h1>
+  <p>Utilisez un identifiant et un mot de passe d’au moins 8 caractères.</p>
+  <form class="form-grid" method="post">
+    <label>Identifiant
+      <input name="username" value="{{ request.form.get('username', '') }}" autocomplete="username" minlength="3" maxlength="80" required autofocus>
+    </label>
+    <label>Mot de passe
+      <input type="password" name="password" autocomplete="new-password" minlength="8" required>
+    </label>
+    <label>Confirmer le mot de passe
+      <input type="password" name="password_confirmation" autocomplete="new-password" minlength="8" required>
+    </label>
+    <button class="button" type="submit">Créer mon compte</button>
+  </form>
+  <p>Déjà inscrit ? <a href="{{ url_for('login') }}">Connectez-vous</a>.</p>
+</section>
+{% endblock %}

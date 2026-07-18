@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}Nouvel utilisateur — Billetterie{% endblock %}
+{% block content %}
+<section class="card auth-card">
+  <p><a href="{{ url_for('settings') }}">← Paramètres</a></p>
+  <h1>Ajouter un utilisateur</h1>
+  <p>Créez un compte autorisé à accéder au logiciel.</p>
+  <form class="form-grid" method="post">
+    <label>Identifiant<input name="username" value="{{ request.form.get('username', '') }}" minlength="3" maxlength="80" required autofocus></label>
+    <label>Mot de passe<input type="password" name="password" minlength="8" required></label>
+    <label>Confirmer le mot de passe<input type="password" name="password_confirmation" minlength="8" required></label>
+    <label class="check-label"><input type="checkbox" name="is_admin" value="1"> Créer comme administrateur</label>
+    <button class="button" type="submit">Ajouter l'utilisateur</button>
+  </form>
+</section>
+{% endblock %}

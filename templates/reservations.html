@@ -1,0 +1,12 @@
+{# Vue exhaustive des réservations : le tableau est inclus depuis un composant partagé. #}
+{% extends 'base.html' %}
+{% block title %}Réservations — Billetterie{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div><h1>Réservations</h1><p>Suivi des billets et de leur statut.</p></div>
+  <a class="button" href="{{ url_for('new_reservation') }}">Nouvelle réservation</a>
+</div>
+<form class="card reservation-filters" method="get"><label>Recherche<input name="q" value="{{ filters.q }}" placeholder="Billet, nom ou téléphone"></label><label>Statut<select name="status"><option value="">Tous</option>{% for status in ['EN_ATTENTE','PAYE','CONFIRME','ANNULE','UTILISE'] %}<option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status|replace('_',' ') }}</option>{% endfor %}</select></label><label>Trajet<select name="trip_id"><option value="">Tous</option>{% for trip in trips %}<option value="{{ trip.id }}" {% if filters.trip_id == trip.id %}selected{% endif %}>{{ trip.origin }} → {{ trip.destination }} · {{ trip.departure_at|datefr }}</option>{% endfor %}</select></label><div class="filter-actions"><button class="button">Rechercher</button><a href="{{ url_for('reservations') }}">Effacer</a></div></form>
+<!-- Inclusion du composant de tableau afin d'éviter de dupliquer son balisage. -->
+<section class="card">{% include 'reservation_table.html' %}</section>
+{% endblock %}

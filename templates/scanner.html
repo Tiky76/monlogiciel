@@ -1,0 +1,201 @@
+{% extends 'base.html' %}
+{% block title %}Scanner QR — Billetterie{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <h1>Scanner QR</h1>
+    <p>Scannez le QR Code d'un billet pour verifier et valider l'embarquement.</p>
+  </div>
+</div>
+
+<div class="scanner-grid">
+  <section class="card scanner-panel">
+    <div class="camera-box">
+      <video id="scanner-video" playsinline muted></video>
+      <div id="scanner-placeholder">Camera non lancee</div>
+    </div>
+    <div class="scanner-actions">
+      <button class="button" id="start-scan" type="button">Lancer le scan</button>
+      <button class="button secondary" id="stop-scan" type="button" disabled>Arreter</button>
+    </div>
+    <p class="scanner-message" id="scanner-message">Appuyez sur lancer, puis placez le QR Code dans le cadre.</p>
+    <form class="manual-scan" id="manual-scan">
+      <label>Code ou URL du billet
+        <input id="manual-token" autocomplete="off" placeholder="Collez le lien ou le token du QR Code">
+      </label>
+      <button class="button secondary" type="submit">Verifier</button>
+    </form>
+  </section>
+
+  <section class="card scanner-result" id="scanner-result">
+    <p class="eyebrow">Resultat du controle</p>
+    <h2>Aucun billet scanne</h2>
+    <p>Le detail du billet apparaitra ici apres le scan.</p>
+  </section>
+</div>
+
+<script>
+  const csrfToken = '{{ csrf_token() }}';
+  const video = document.getElementById('scanner-video');
+  const placeholder = document.getElementById('scanner-placeholder');
+  const message = document.getElementById('scanner-message');
+  const resultBox = document.getElementById('scanner-result');
+  const startButton = document.getElementById('start-scan');
+  const stopButton = document.getElementById('stop-scan');
+  const manualForm = document.getElementById('manual-scan');
+  const manualInput = document.getElementById('manual-token');
+  let stream = null;
+  let detector = null;
+  let scanning = false;
+  let lastToken = '';
+
+  function setMessage(text, type = '') {
+    message.textContent = text;
+    message.className = `scanner-message ${type}`;
+  }
+
+  function extractToken(value) {
+    const raw = value.trim();
+    if (!raw) return '';
+    try {
+      const url = new URL(raw, window.location.origin);
+      const parts = url.pathname.split('/').filter(Boolean);
+      const verifyIndex = parts.indexOf('verify');
+      if (verifyIndex >= 0 && parts[verifyIndex + 1]) return parts[verifyIndex + 1];
+      if (parts.length) return parts[parts.length - 1];
+    } catch (_error) {
+      return raw;
+    }
+    return raw;
+  }
+
+  function statusLabel(status) {
+    return status.replace('_', ' ');
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    }[character]));
+  }
+
+  function renderResult(data, token) {
+    if (!data || !data.reservation) {
+      resultBox.innerHTML = '<p class="eyebrow">Resultat du controle</p><h2>Billet introuvable</h2><p>Ce QR Code ne correspond a aucun billet connu.</p>';
+      return;
+    }
+    const reservation = data.reservation;
+    const trip = reservation.trip;
+    const status = escapeHtml(reservation.status);
+    const action = data.can_board
+      ? `<button class="button" id="use-ticket" type="button" data-token="${escapeHtml(token)}">Valider l'embarquement</button>`
+      : '';
+    resultBox.innerHTML = `
+      <p class="eyebrow">Resultat du controle</p>
+      <div class="scanner-status ${status.toLowerCase()}">${escapeHtml(statusLabel(reservation.status))}</div>
+      <h2>${escapeHtml(reservation.ticket_number)}</h2>
+      <dl>
+        <dt>Passager</dt><dd>${escapeHtml(reservation.customer_name)}</dd>
+        <dt>Trajet</dt><dd>${escapeHtml(trip.origin)} -> ${escapeHtml(trip.destination)}</dd>
+        <dt>Depart</dt><dd>${escapeHtml(trip.departure_at)}</dd>
+        <dt>Siege</dt><dd>${escapeHtml(reservation.seat_number)}</dd>
+        <dt>Prix</dt><dd>${escapeHtml(reservation.amount)}</dd>
+      </dl>
+      ${data.already_used ? '<p class="scanner-message warning">Ce billet a deja ete utilise.</p>' : ''}
+      ${data.can_board ? '<p class="scanner-message success">Billet confirme, embarquement possible.</p>' : ''}
+      ${!data.can_board && !data.already_used ? '<p class="scanner-message warning">Ce billet ne peut pas encore etre valide pour l\\'embarquement.</p>' : ''}
+      ${action}
+    `;
+    const useButton = document.getElementById('use-ticket');
+    if (useButton) useButton.addEventListener('click', () => useTicket(useButton.dataset.token));
+  }
+
+  async function verifyToken(token) {
+    if (!token || token === lastToken) return;
+    lastToken = token;
+    setMessage('Verification du billet...', '');
+    const response = await fetch(`/api/verify/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      resultBox.innerHTML = `<p class="eyebrow">Resultat du controle</p><h2>Erreur</h2><p>${data.error || 'Verification impossible.'}</p>`;
+      setMessage(data.error || 'Verification impossible.', 'warning');
+      return;
+    }
+    renderResult(data, token);
+    setMessage('Billet lu correctement.', 'success');
+  }
+
+  async function useTicket(token) {
+    setMessage('Validation de l\\'embarquement...', '');
+    const response = await fetch(`/api/verify/${encodeURIComponent(token)}/use`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+      body: '{}'
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setMessage(data.error || 'Validation impossible.', 'warning');
+      return;
+    }
+    renderResult({reservation: data.reservation, can_board: false, already_used: true}, token);
+    setMessage(data.message || 'Billet valide.', 'success');
+  }
+
+  async function scanLoop() {
+    if (!scanning || !detector) return;
+    try {
+      const codes = await detector.detect(video);
+      if (codes.length) await verifyToken(extractToken(codes[0].rawValue));
+    } catch (_error) {
+      setMessage('Lecture du QR Code impossible. Essayez la saisie manuelle.', 'warning');
+    }
+    requestAnimationFrame(scanLoop);
+  }
+
+  async function startScan() {
+    if (!('BarcodeDetector' in window)) {
+      setMessage('Scanner automatique non disponible sur cet appareil. Utilisez la saisie manuelle.', 'warning');
+      return;
+    }
+    try {
+      detector = new BarcodeDetector({formats: ['qr_code']});
+      stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}, audio: false});
+      video.srcObject = stream;
+      await video.play();
+      scanning = true;
+      placeholder.style.display = 'none';
+      startButton.disabled = true;
+      stopButton.disabled = false;
+      setMessage('Scan actif. Placez le QR Code dans le cadre.', 'success');
+      scanLoop();
+    } catch (_error) {
+      setMessage('Acces camera refuse ou indisponible. Autorisez la camera puis reessayez.', 'warning');
+    }
+  }
+
+  function stopScan() {
+    scanning = false;
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.srcObject = null;
+    placeholder.style.display = 'grid';
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    setMessage('Scan arrete.', '');
+  }
+
+  startButton.addEventListener('click', startScan);
+  stopButton.addEventListener('click', stopScan);
+  manualForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    lastToken = '';
+    verifyToken(extractToken(manualInput.value));
+  });
+  window.addEventListener('beforeunload', stopScan);
+</script>
+{% endblock %}

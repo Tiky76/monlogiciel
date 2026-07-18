@@ -1,0 +1,23 @@
+{# Formulaire de création d'une réservation avec sélection d'un trajet à venir. #}
+{% extends 'base.html' %}
+{% block title %}Nouvelle réservation — Billetterie{% endblock %}
+{% block content %}
+<section class="card form-card">
+  <h1>Nouvelle réservation</h1>
+  <!-- Sans trajet à venir, le formulaire est remplacé par un lien de création. -->
+  {% if trips %}
+  <form method="post" class="form-grid">
+    <label>Trajet<select name="trip_id" required>
+      <!-- Les options sont générées depuis les trajets fournis par Flask. -->
+      {% for trip in trips %}<option value="{{ trip.id }}">{{ trip.origin }} → {{ trip.destination }} — {{ trip.departure_at|datefr }} ({{ '%.0f'|format(trip.price) }})</option>{% endfor %}
+    </select></label>
+    <label>Nom du client<input name="customer_name" required></label>
+    <label>Téléphone<input name="customer_phone" required></label>
+    <p class="info-panel">Le premier siège disponible sera attribué automatiquement.</p>
+    <button class="button">Enregistrer la réservation</button>
+  </form>
+  {% else %}
+  <p>Créez d’abord un trajet.</p><a class="button" href="{{ url_for('trips') }}">Créer un trajet</a>
+  {% endif %}
+</section>
+{% endblock %}

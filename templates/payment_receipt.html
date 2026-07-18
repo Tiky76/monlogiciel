@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block body_class %}receipt-page{% endblock %}
+{% block title %}Reçu {{ payment.id }} — Billetterie{% endblock %}
+{% block content %}
+<div class="receipt-actions"><a href="{{ url_for('reservation_detail', reservation_id=payment.reservation_id) }}">← Retour au billet</a><button class="button" type="button" onclick="window.print()">Imprimer le reçu</button></div>
+<article class="receipt{% if payment.voided_at %} receipt-voided{% endif %}">
+  <div class="receipt-brand"><img src="{{ url_for('static', filename='logo.png') }}" alt=""><div><h1>{{ app_settings.agency_name }}</h1><p>{{ app_settings.agency_address }} · {{ app_settings.agency_phone }}</p></div></div>
+  <div class="receipt-title"><span>REÇU DE PAIEMENT</span><strong>N° {{ '%06d'|format(payment.id) }}</strong></div>
+  {% if payment.voided_at %}<div class="void-stamp">PAIEMENT ANNULÉ</div>{% endif %}
+  <dl><dt>Billet</dt><dd>{{ payment.ticket_number }}</dd><dt>Passager</dt><dd>{{ payment.customer_name }}</dd><dt>Trajet</dt><dd>{{ payment.origin }} → {{ payment.destination }}</dd><dt>Siège</dt><dd>{{ payment.seat_number }}</dd><dt>Moyen</dt><dd>{{ payment.method|replace('_', ' ') }}</dd><dt>Reçu par</dt><dd>{{ payment.receiver_name or '—' }}</dd><dt>Date</dt><dd>{{ payment.paid_at|datefr }}</dd></dl>
+  <div class="receipt-total"><span>Montant payé</span><strong>{{ '%.0f'|format(payment.amount) }} {{ app_settings.currency }}</strong></div>
+  <p class="receipt-footer">Merci pour votre confiance.</p>
+</article>
+{% endblock %}

@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- Gabarit commun : les autres pages héritent de cette structure via Jinja. -->
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Chaque page peut remplacer ce bloc pour préciser son titre. -->
+  <title>{% block title %}Billetterie{% endblock %}</title>
+  <!-- Feuille de style commune chargée par Flask depuis le dossier static. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}" data-theme="{{ app_settings.theme }}">
+  <!-- Navigation globale construite avec les noms de routes Flask. -->
+  <header>
+    <a class="brand" href="{{ url_for('dashboard') }}"><img src="{{ url_for('static', filename='logo.png') }}" alt=""><span>Billetterie</span></a>
+    <nav>
+      {% if current_user %}
+      <a href="{{ url_for('dashboard') }}">Tableau de bord</a>
+      <a href="{{ url_for('trips') }}">Trajets</a>
+      <a href="{{ url_for('reservations') }}">Réservations</a>
+      <a href="{{ url_for('scanner') }}">Scanner QR</a>
+      {% if current_user.is_admin %}<a href="{{ url_for('reports') }}">Rapports</a>{% endif %}
+      {% if current_user.is_admin %}<a href="{{ url_for('settings') }}">Paramètres</a>{% endif %}
+      <a href="{{ url_for('help_page') }}">Aide</a>
+      <a class="button" href="{{ url_for('new_reservation') }}">Nouvelle réservation</a>
+      <span class="user-name">{{ current_user['username'] }}</span>
+      <form class="logout-form" method="post" action="{{ url_for('logout') }}">
+        <button class="link-button" type="submit">Déconnexion</button>
+      </form>
+      {% else %}
+      <a href="{{ url_for('login') }}">Connexion</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main>
+    <!-- Affiche les messages ponctuels ajoutés côté serveur avec flash(). -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    <!-- Zone remplacée par le contenu de chaque template enfant. -->
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+    document.querySelectorAll('form[method="post"], form[method="POST"]').forEach(function (form) {
+      if (!form.querySelector('input[name="csrf_token"]')) {
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'csrf_token'; input.value = '{{ csrf_token() }}';
+        form.prepend(input);
+      }
+    });
+  </script>
+</body>
+</html>

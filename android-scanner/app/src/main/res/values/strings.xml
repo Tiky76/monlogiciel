@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Scanner Billetterie</string>
+    <string name="scanner_url">http://10.0.2.2:5000/scanner</string>
+</resources>

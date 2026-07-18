@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block title %}Erreur {{ code }} — Billetterie{% endblock %}{% block content %}<section class="error-card card"><strong>{{ code }}</strong><h1>{{ title }}</h1><p>{{ message }}</p><a class="button" href="{{ url_for('dashboard') if current_user else url_for('login') }}">Retour à l'accueil</a></section>{% endblock %}

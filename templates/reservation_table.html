@@ -1,0 +1,21 @@
+<!-- Composant réutilisable : attend une collection ``reservations`` fournie par la route. -->
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Billet</th><th>Client</th><th>Trajet</th><th>Siège</th><th>Statut</th><th></th></tr></thead>
+    <tbody>
+      <!-- La boucle affiche une ligne par réservation ; else couvre la liste vide. -->
+      {% for r in reservations %}
+      <tr>
+        <td>{{ r.ticket_number }}</td>
+        <td>{{ r.customer_name }}<small>{{ r.customer_phone }}</small></td>
+        <td>{{ r.origin }} → {{ r.destination }}<small>{{ r.departure_at|datefr }}</small></td>
+        <td>{{ r.seat_number }}</td>
+        <td><span class="badge {{ r.status|lower }}">{{ r.status|replace('_', ' ') }}</span></td>
+        <td><a href="{{ url_for('reservation_detail', reservation_id=r.id) }}">Voir</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">Aucune réservation.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

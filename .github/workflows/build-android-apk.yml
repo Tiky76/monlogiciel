@@ -1,0 +1,81 @@
+name: Generer APK Scanner QR
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Adresse de la page scanner du logiciel web"
+        required: true
+        default: "http://192.168.1.20:5000/scanner"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "android-scanner/**"
+      - ".github/workflows/build-android-apk.yml"
+
+jobs:
+  build-apk:
+    name: Construire l'APK Android
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Installer Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Installer Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Configurer l'adresse du logiciel web
+        shell: bash
+        run: |
+          if [ -z "$SERVER_URL" ]; then
+            export SERVER_URL="http://192.168.1.20:5000/scanner"
+          fi
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          path = Path("android-scanner/app/src/main/res/values/strings.xml")
+          value = os.environ["SERVER_URL"]
+          escaped = (
+              value.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace('"', "&quot;")
+                   .replace("'", "\\'")
+          )
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              '<string name="scanner_url">http://10.0.2.2:5000/scanner</string>',
+              f'<string name="scanner_url">{escaped}</string>',
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
+        env:
+          SERVER_URL: ${{ github.event.inputs.server_url }}
+
+      - name: Compiler l'APK
+        run: gradle -p android-scanner assembleDebug
+
+      - name: Renommer l'APK
+        run: |
+          mkdir -p build-output
+          cp android-scanner/app/build/outputs/apk/debug/app-debug.apk build-output/scanner-billetterie-debug.apk
+
+      - name: Publier l'APK en artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-billetterie-apk
+          path: build-output/scanner-billetterie-debug.apk
