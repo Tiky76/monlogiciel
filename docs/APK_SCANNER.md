@@ -75,3 +75,16 @@ http://192.168.1.101:5000/scanner
 ```
 
 Pour un usage reel avec plusieurs telephones, preferer une adresse HTTPS publique.
+
+## Si Android affiche "Application non installee"
+
+1. Supprimer toute ancienne application appelee `Scanner Billetterie` ou
+   `Scanner TicketBus`.
+2. Installer uniquement le fichier `.apk`, pas le fichier `.zip`.
+3. Autoriser l'installation depuis WhatsApp, Chrome ou le gestionnaire de
+   fichiers.
+4. Si l'erreur continue, generer une nouvelle version APK depuis GitHub Actions.
+
+La version 1.1 utilise l'identifiant Android
+`com.ticketbus.billetterie.scanner` pour eviter les conflits avec les anciens
+essais signes differemment.
