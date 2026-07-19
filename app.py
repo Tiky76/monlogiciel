@@ -26,7 +26,7 @@ import qrcode
 # Dossier contenant ce fichier ; il sert de point de repère pour les fichiers du projet.
 BASE_DIR = Path(__file__).resolve().parent
 # Chemin absolu de la base SQLite utilisée par l'application.
-DATABASE = BASE_DIR / "tickets.db"
+DATABASE = Path(os.environ.get("TICKETS_DB_PATH", str(BASE_DIR / "tickets.db"))).expanduser()
 
 # Instance principale de l'application web Flask.
 app = Flask(__name__)
@@ -72,7 +72,9 @@ FARE_ROUTES = tuple(
 def get_db() -> sqlite3.Connection:
     """Retourne la connexion SQLite associée à la requête Flask courante."""
     if "db" not in g:
-        g.db = sqlite3.connect(app.config["DATABASE"])
+        database_path = Path(app.config["DATABASE"])
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        g.db = sqlite3.connect(database_path)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
         user_columns = {row[1] for row in g.db.execute("PRAGMA table_info(users)")}
@@ -278,7 +280,9 @@ def safe_next_url(next_url: str | None) -> str | None:
 def init_db() -> None:
     """Crée les tables et index définis dans le script SQL du projet."""
     schema = (BASE_DIR / "schema.sql").read_text(encoding="utf-8")
-    with closing(sqlite3.connect(app.config["DATABASE"])) as db:
+    database_path = Path(app.config["DATABASE"])
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database_path)) as db:
         db.executescript(schema)
         db.commit()
 
@@ -2393,13 +2397,47 @@ def create_admin_command(username: str, password: str):
     """Crée directement dans SQLite le compte administrateur initial."""
     if not valid_username(username) or len(password) < 8:
         raise click.ClickException("Identifiant invalide ou mot de passe de moins de 8 caractères.")
-    with sqlite3.connect(app.config["DATABASE"]) as db:
+    database_path = Path(app.config["DATABASE"])
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path) as db:
         try:
             db.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 1)", (username, generate_password_hash(password)))
             db.commit()
         except sqlite3.IntegrityError as error:
             raise click.ClickException("Cet identifiant existe déjà.") from error
     click.echo("Compte administrateur créé dans la base de données.")
+
+
+@app.cli.command("ensure-admin")
+def ensure_admin_command():
+    """Cree le premier administrateur depuis ADMIN_USERNAME et ADMIN_PASSWORD."""
+    username = os.environ.get("ADMIN_USERNAME", "").strip()
+    password = os.environ.get("ADMIN_PASSWORD", "")
+    if not username or not password:
+        click.echo("ADMIN_USERNAME ou ADMIN_PASSWORD absent : aucun administrateur automatique cree.")
+        return
+    if not valid_username(username) or len(password) < 8:
+        raise click.ClickException("ADMIN_USERNAME invalide ou ADMIN_PASSWORD trop court.")
+    database_path = Path(app.config["DATABASE"])
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path) as db:
+        active_admin = db.execute("SELECT id FROM users WHERE is_admin = 1 AND is_active = 1 LIMIT 1").fetchone()
+        if active_admin:
+            click.echo("Un administrateur actif existe deja.")
+            return
+        existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE users SET password_hash = ?, is_admin = 1, is_active = 1 WHERE id = ?",
+                (generate_password_hash(password), existing[0]),
+            )
+        else:
+            db.execute(
+                "INSERT INTO users (username, password_hash, is_admin, is_active) VALUES (?, ?, 1, 1)",
+                (username, generate_password_hash(password)),
+            )
+        db.commit()
+    click.echo("Administrateur initial pret.")
 
 
 @app.errorhandler(400)

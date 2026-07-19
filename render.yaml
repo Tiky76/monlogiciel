@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: monlogiciel
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: flask --app app init-db && flask --app app ensure-admin && gunicorn app:app --bind 0.0.0.0:$PORT
+    disk:
+      name: billetterie-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: TICKETS_DB_PATH
+        value: /var/data/tickets.db
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: administrateur
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: AI_API_TOKEN
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_GRAPH_VERSION
+        value: v23.0
+      - key: SHWARY_MERCHANT_ID
+        sync: false
+      - key: SHWARY_MERCHANT_KEY
+        sync: false
+      - key: SHWARY_COUNTRY_CODE
+        value: DRC
+      - key: SHWARY_CALLBACK_URL
+        sync: false

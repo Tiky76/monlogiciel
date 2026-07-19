@@ -68,6 +68,12 @@ Le projet prépare une intégration Shwary pour demander un paiement réseau/mob
 money depuis le bot, recevoir le callback de paiement et générer un billet PDF.
 Les instructions sont dans `docs/SHWARY_PAYMENT.md`.
 
+## Déploiement Render
+
+Le projet contient `render.yaml` pour déployer le logiciel sur Render avec
+Gunicorn et une base SQLite placée sur disque persistant. Le guide se trouve
+dans `docs/RENDER_DEPLOY.md`.
+
 ## Scanner QR mobile
 
 Le logiciel web principal ne montre pas le scanner QR dans son menu. Le controle des billets doit rester dans une application de scannage separee.
