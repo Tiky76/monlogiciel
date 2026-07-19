@@ -41,6 +41,9 @@
     <!-- Zone remplacée par le contenu de chaque template enfant. -->
     {% block content %}{% endblock %}
   </main>
+  <footer class="site-footer">
+    © 2026 Billetterie RDC. Tous droits réservés.
+  </footer>
   <script>
     document.querySelectorAll('form[method="post"], form[method="POST"]').forEach(function (form) {
       if (!form.querySelector('input[name="csrf_token"]')) {

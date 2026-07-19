@@ -20,6 +20,7 @@ form.logout-form { display:inline; }
 .link-button:hover { text-decoration:underline; }
 /* Conteneur central et titre communs aux différentes pages. */
 main { max-width:1240px; margin:34px auto; padding:0 24px; }
+.site-footer { max-width:1240px; margin:10px auto 28px; padding:0 24px; color:#6a7a8d; text-align:center; font-size:.92rem; }
 .page-title { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
 h1 { margin:0; font-size:1.8rem; }
 h2 { margin-top:0; font-size:1.15rem; }
@@ -124,7 +125,7 @@ dd { margin:0; }
 @media print {
   @page { margin:10mm; }
   body { background:#fff; }
-  body:not(.receipt-page):not(.reports-page) > header, body:not(.receipt-page):not(.reports-page) main > :not(.ticket-section), .ticket-heading { display:none!important; }
+  body:not(.receipt-page):not(.reports-page) > header, body:not(.receipt-page):not(.reports-page) > .site-footer, body:not(.receipt-page):not(.reports-page) main > :not(.ticket-section), .ticket-heading { display:none!important; }
   main { max-width:none; margin:0; padding:0; }
   .ticket-section { margin:0; }
   .ticket { max-width:100%; border:1px solid #777; box-shadow:none; break-inside:avoid; }
