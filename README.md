@@ -48,10 +48,30 @@ Routes utiles :
 - `GET /api/verify/<token>` : verifier un QR Code ;
 - `POST /api/verify/<token>/use` : valider l'embarquement.
 
+## Bot WhatsApp
+
+Une première base de bot WhatsApp est disponible avec le webhook `/webhooks/whatsapp`.
+Elle permet de guider un client jusqu'à la création d'une réservation avec siège
+automatique. Les instructions de connexion à WhatsApp Cloud API sont dans
+`docs/WHATSAPP_BOT.md`.
+
+## API pour IA
+
+Une API dédiée aux assistants IA est disponible sous `/api/ai`. Elle utilise un
+jeton `AI_API_TOKEN` et permet de lire le contexte métier, rechercher des trajets
+et créer des réservations avec siège automatique. La documentation est dans
+`docs/AI_API.md`.
+
+## Paiement Shwary et billet PDF
+
+Le projet prépare une intégration Shwary pour demander un paiement réseau/mobile
+money depuis le bot, recevoir le callback de paiement et générer un billet PDF.
+Les instructions sont dans `docs/SHWARY_PAYMENT.md`.
+
 ## Scanner QR mobile
 
-La page `Scanner QR` permet a un agent connecte de scanner un billet avec la camera du telephone et de valider l'embarquement.
+Le logiciel web principal ne montre pas le scanner QR dans son menu. Le controle des billets doit rester dans une application de scannage separee.
 
-Un projet Android de base est disponible dans `android-scanner/` pour produire une APK WebView. Les instructions sont dans `docs/APK_SCANNER.md`.
+Un projet Android de base est disponible dans `android-scanner/` pour produire une APK de controle. Les instructions sont dans `docs/APK_SCANNER.md`.
 
 Un workflow GitHub Actions est egalement disponible pour generer l'APK depuis GitHub: `.github/workflows/build-android-apk.yml`.

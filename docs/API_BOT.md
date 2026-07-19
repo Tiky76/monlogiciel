@@ -3,6 +3,16 @@
 Cette API permet a un bot externe de consulter les trajets, creer une reservation,
 enregistrer un paiement, confirmer un billet et verifier un QR Code.
 
+Une base de bot WhatsApp est aussi disponible avec le webhook
+`/webhooks/whatsapp`. Les details de connexion a WhatsApp Cloud API sont dans
+`docs/WHATSAPP_BOT.md`.
+
+Une API separee pour IA est disponible sous `/api/ai`. Elle utilise le jeton
+`AI_API_TOKEN` et sa documentation complete se trouve dans `docs/AI_API.md`.
+
+Le paiement reseau avec Shwary et le billet PDF sont documentes dans
+`docs/SHWARY_PAYMENT.md`.
+
 Base locale de developpement:
 
 ```text
@@ -83,6 +93,17 @@ Reponse:
 | POST | `/api/verify/<token>/use` | Oui | Marquer le billet comme utilise |
 | GET | `/api/payments` | Oui | Lister les paiements recents |
 | GET | `/api/settings` | Admin | Lire parametres, villes et tarifs |
+| GET | `/webhooks/whatsapp` | Verify token | Verifier le webhook WhatsApp |
+| POST | `/webhooks/whatsapp` | Meta webhook | Recevoir les messages WhatsApp |
+| GET | `/api/ai/capabilities` | AI token | Lire les capacites de l'API IA |
+| GET | `/api/ai/context` | AI token | Lire le contexte metier |
+| POST | `/api/ai/trips/search` | AI token | Rechercher les trajets |
+| POST | `/api/ai/reservations` | AI token | Creer une reservation par IA |
+| GET | `/api/ai/reservations/<reference>` | AI token | Lire une reservation |
+| GET | `/api/ai/reservations/<reference>/ticket.pdf` | AI token | Telecharger le billet PDF |
+| POST | `/api/ai/reservations/<reference>/payments/shwary` | AI token | Lancer une demande Shwary |
+| GET | `/api/ai/payments/shwary/<reference_id>` | AI token | Lire le statut Shwary |
+| POST | `/webhooks/shwary` | Callback | Recevoir le statut Shwary |
 
 ## Creer une reservation
 

@@ -77,3 +77,38 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     details TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Etat de conversation du bot WhatsApp pour chaque client.
+CREATE TABLE IF NOT EXISTS whatsapp_conversations (
+    phone TEXT PRIMARY KEY,
+    step TEXT NOT NULL DEFAULT 'ASK_ORIGIN',
+    data TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Journal minimal des messages WhatsApp recus et envoyes.
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('IN', 'OUT')),
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Demandes de paiement réseau initiées auprès d'un fournisseur comme Shwary.
+CREATE TABLE IF NOT EXISTS payment_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_id INTEGER NOT NULL REFERENCES reservations(id),
+    provider TEXT NOT NULL,
+    provider_transaction_id TEXT,
+    reference_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    amount REAL NOT NULL,
+    currency TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    country_code TEXT NOT NULL,
+    checkout_payload TEXT,
+    failure_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -18,7 +18,6 @@
       <a href="{{ url_for('dashboard') }}">Tableau de bord</a>
       <a href="{{ url_for('trips') }}">Trajets</a>
       <a href="{{ url_for('reservations') }}">Réservations</a>
-      <a href="{{ url_for('scanner') }}">Scanner QR</a>
       {% if current_user.is_admin %}<a href="{{ url_for('reports') }}">Rapports</a>{% endif %}
       {% if current_user.is_admin %}<a href="{{ url_for('settings') }}">Paramètres</a>{% endif %}
       <a href="{{ url_for('help_page') }}">Aide</a>

@@ -1,13 +1,60 @@
 {% extends 'base.html' %}
 {% block title %}Aide — Billetterie{% endblock %}
 {% block content %}
-<div class="page-title"><div><h1>Centre d'aide</h1><p>Les étapes essentielles pour utiliser la billetterie.</p></div></div>
+<div class="page-title">
+  <div>
+    <h1>Centre d'aide</h1>
+    <p>Les étapes essentielles pour utiliser la billetterie.</p>
+  </div>
+</div>
+
 <div class="help-grid">
-  <section class="card help-card"><span>1</span><div><h2>Créer les trajets</h2><p>Dans <strong>Trajets</strong>, renseignez le départ, la destination, la date, le nombre de places et le tarif.</p></div></section>
-  <section class="card help-card"><span>2</span><div><h2>Enregistrer une réservation</h2><p>Choisissez un trajet et saisissez le passager. Le premier siège libre est attribué automatiquement.</p></div></section>
-  <section class="card help-card"><span>3</span><div><h2>Enregistrer le paiement</h2><p>Ouvrez la réservation, choisissez le moyen de paiement puis cliquez sur <strong>Marquer comme payé</strong>.</p></div></section>
-  <section class="card help-card"><span>4</span><div><h2>Imprimer le billet</h2><p>Contrôlez l'aperçu puis cliquez sur <strong>Imprimer</strong>. Seul le billet est imprimé.</p></div></section>
-  <section class="card help-card"><span>5</span><div><h2>Vérifier le QR Code</h2><p>Ouvrez <strong>Scanner QR</strong>, scannez le code au bas du billet, puis validez l'embarquement si le billet est confirmé.</p></div></section>
-  <section class="card help-card"><span>6</span><div><h2>Administrer le logiciel</h2><p>L'administrateur configure l'apparence, les billets, l'impression et les comptes dans <strong>Paramètres</strong>.</p></div></section>
+  <section class="card help-card">
+    <span>1</span>
+    <div>
+      <h2>Créer les trajets</h2>
+      <p>Dans <strong>Trajets</strong>, renseignez le départ, la destination, la date, le nombre de places et le tarif.</p>
+    </div>
+  </section>
+
+  <section class="card help-card">
+    <span>2</span>
+    <div>
+      <h2>Enregistrer une réservation</h2>
+      <p>Choisissez un trajet et saisissez le passager. Le premier siège libre est attribué automatiquement.</p>
+    </div>
+  </section>
+
+  <section class="card help-card">
+    <span>3</span>
+    <div>
+      <h2>Enregistrer le paiement</h2>
+      <p>Ouvrez la réservation, choisissez le moyen de paiement puis cliquez sur <strong>Marquer comme payé</strong>.</p>
+    </div>
+  </section>
+
+  <section class="card help-card">
+    <span>4</span>
+    <div>
+      <h2>Imprimer le billet</h2>
+      <p>Contrôlez l'aperçu puis cliquez sur <strong>Imprimer</strong>. Seul le billet est imprimé.</p>
+    </div>
+  </section>
+
+  <section class="card help-card">
+    <span>5</span>
+    <div>
+      <h2>Contrôler les billets</h2>
+      <p>La vérification des QR Codes se fait avec l'application de scannage dédiée, séparée du logiciel web principal.</p>
+    </div>
+  </section>
+
+  <section class="card help-card">
+    <span>6</span>
+    <div>
+      <h2>Administrer le logiciel</h2>
+      <p>L'administrateur configure l'apparence, les billets, l'impression et les comptes dans <strong>Paramètres</strong>.</p>
+    </div>
+  </section>
 </div>
 {% endblock %}

@@ -85,6 +85,7 @@ dd { margin:0; }
 .ticket-grid strong, .ticket-bottom strong { display:block; margin-top:4px; }
 .ticket-bottom { justify-content:space-between; border-top:1px dashed #b8c5d3; }
 .ticket-bottom p { margin:12px 0 0; }.ticket-qr { text-align:center; }.ticket-qr img { display:block; width:112px; height:112px; image-rendering:pixelated; }
+.ticket-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }.network-payment-box { margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }.network-payment-box h3 { margin:0 0 8px; }.muted { color:#6a7a8d; }
 .ticket-80mm { max-width:420px; }.ticket-80mm .ticket-grid { grid-template-columns:1fr 1fr; }
 .info-panel { margin:0; padding:12px 14px; border-radius:7px; background:#e9f3fb; color:var(--blue); border-left:4px solid var(--blue); }
 .login-note { font-size:.9rem; text-align:center; }

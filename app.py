@@ -3,15 +3,19 @@ from __future__ import annotations
 import sqlite3
 import base64
 import csv
+import json
 import math
 import os
 import secrets
 import time
+import zlib
 from io import BytesIO, StringIO
 from contextlib import closing
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 import click
 from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -35,6 +39,16 @@ app.config.update(
 )
 # La configuration centralise le chemin afin qu'il puisse être remplacé facilement.
 app.config["DATABASE"] = DATABASE
+app.config["WHATSAPP_VERIFY_TOKEN"] = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+app.config["WHATSAPP_ACCESS_TOKEN"] = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
+app.config["WHATSAPP_PHONE_NUMBER_ID"] = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
+app.config["WHATSAPP_GRAPH_VERSION"] = os.environ.get("WHATSAPP_GRAPH_VERSION", "v23.0")
+app.config["AI_API_TOKEN"] = os.environ.get("AI_API_TOKEN", "")
+app.config["SHWARY_API_BASE"] = os.environ.get("SHWARY_API_BASE", "https://api.shwary.com")
+app.config["SHWARY_MERCHANT_ID"] = os.environ.get("SHWARY_MERCHANT_ID", "")
+app.config["SHWARY_MERCHANT_KEY"] = os.environ.get("SHWARY_MERCHANT_KEY", "")
+app.config["SHWARY_COUNTRY_CODE"] = os.environ.get("SHWARY_COUNTRY_CODE", "DRC")
+app.config["SHWARY_CALLBACK_URL"] = os.environ.get("SHWARY_CALLBACK_URL", "")
 
 DEFAULT_SETTINGS = {
     "agency_name": "Billetterie",
@@ -98,6 +112,41 @@ def get_db() -> sqlite3.Connection:
                    action TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                )"""
         )
+        g.db.execute(
+            """CREATE TABLE IF NOT EXISTS whatsapp_conversations (
+                   phone TEXT PRIMARY KEY,
+                   step TEXT NOT NULL DEFAULT 'ASK_ORIGIN',
+                   data TEXT NOT NULL DEFAULT '{}',
+                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
+        g.db.execute(
+            """CREATE TABLE IF NOT EXISTS whatsapp_messages (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   phone TEXT NOT NULL,
+                   direction TEXT NOT NULL CHECK (direction IN ('IN', 'OUT')),
+                   message TEXT NOT NULL,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
+        g.db.execute(
+            """CREATE TABLE IF NOT EXISTS payment_requests (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   reservation_id INTEGER NOT NULL REFERENCES reservations(id),
+                   provider TEXT NOT NULL,
+                   provider_transaction_id TEXT,
+                   reference_id TEXT NOT NULL UNIQUE,
+                   status TEXT NOT NULL DEFAULT 'PENDING',
+                   amount REAL NOT NULL,
+                   currency TEXT NOT NULL,
+                   phone TEXT NOT NULL,
+                   country_code TEXT NOT NULL,
+                   checkout_payload TEXT,
+                   failure_reason TEXT,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
         g.db.commit()
     return g.db
 
@@ -157,6 +206,8 @@ def csrf_token() -> str:
 def protect_post_requests():
     """Refuse toute écriture ne provenant pas d'un formulaire de la session."""
     if request.method == "POST":
+        if request.path in {"/webhooks/whatsapp", "/webhooks/shwary"} or request.path.startswith("/api/ai/"):
+            return
         expected = session.get("csrf_token", "")
         provided = request.form.get("csrf_token", "") or request.headers.get("X-CSRF-Token", "")
         if not expected or not secrets.compare_digest(expected, provided):
@@ -257,6 +308,74 @@ def qr_code_data_uri(value: str) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def pdf_text(value: object) -> str:
+    """Prepare un texte simple compatible avec le PDF genere sans dependance externe."""
+    text = str(value if value is not None else "")
+    replacements = {"→": "->", "✅": "", "👋": "", "—": "-"}
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text.encode("latin-1", "replace").decode("latin-1").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def build_ticket_pdf(reservation: sqlite3.Row) -> bytes:
+    """Genere un billet PDF simple avec les informations essentielles et un QR Code."""
+    settings = get_settings()
+    verify_url = url_for("verify_ticket", token=reservation["verification_token"], _external=True)
+    qr_image = qrcode.make(verify_url).convert("RGB").resize((132, 132))
+    qr_width, qr_height = qr_image.size
+    qr_stream = zlib.compress(qr_image.tobytes())
+    lines = [
+        (settings["agency_name"], 20, 390),
+        ("BILLET DE VOYAGE", 16, 365),
+        (f"Numero : {reservation['ticket_number']}", 11, 335),
+        (f"Passager : {reservation['customer_name']}", 11, 315),
+        (f"Trajet : {reservation['origin']} -> {reservation['destination']}", 11, 295),
+        (f"Depart : {format_date(reservation['departure_at'])}", 11, 275),
+        (f"Siege : {reservation['seat_number']}", 11, 255),
+        (f"Prix : {reservation['amount']:.0f} {settings['currency']}", 11, 235),
+        (f"Statut : {reservation['status']}", 11, 215),
+        (f"Agence : {settings['agency_name']}", 10, 190),
+        (settings["agency_phone"], 9, 176),
+        ("QR Code de controle", 10, 155),
+        (settings["ticket_footer"], 9, 25),
+    ]
+    text_commands = ["BT", "/F1 11 Tf"]
+    for text, size, y in lines:
+        text_commands.append(f"/F1 {size} Tf")
+        text_commands.append(f"38 {y} Td ({pdf_text(text)}) Tj")
+        text_commands.append(f"-38 {-y} Td")
+    text_commands.append("ET")
+    content = "\n".join(text_commands) + "\nq 132 0 0 132 38 45 cm /Im1 Do Q\n"
+    content_bytes = content.encode("latin-1", "replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 420] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 6 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        (
+            f"<< /Type /XObject /Subtype /Image /Width {qr_width} /Height {qr_height} "
+            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(qr_stream)} >>"
+        ).encode("ascii") + b"\nstream\n" + qr_stream + b"\nendstream",
+        f"<< /Length {len(content_bytes)} >>".encode("ascii") + b"\nstream\n" + content_bytes + b"\nendstream",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, 1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode("ascii"))
+        pdf.extend(obj)
+        pdf.extend(b"\nendobj\n")
+    xref_at = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(pdf)
+
+
 def api_error(message: str, status_code: int = 400):
     """Retourne une erreur JSON lisible par une application externe."""
     return jsonify({"error": message}), status_code
@@ -280,6 +399,24 @@ def api_admin_required(view):
     def wrapped_view(**kwargs):
         if not g.user["is_admin"]:
             return api_error("Droits administrateur requis.", 403)
+        return view(**kwargs)
+
+    return wrapped_view
+
+
+def ai_api_required(view):
+    """Protège les routes destinées à une IA externe avec un jeton Bearer."""
+    @wraps(view)
+    def wrapped_view(**kwargs):
+        expected = app.config["AI_API_TOKEN"]
+        if not expected:
+            return api_error("AI_API_TOKEN non configure.", 503)
+        authorization = request.headers.get("Authorization", "")
+        provided = request.headers.get("X-AI-Token", "")
+        if authorization.startswith("Bearer "):
+            provided = authorization.removeprefix("Bearer ").strip()
+        if not provided or not secrets.compare_digest(provided, expected):
+            return api_error("Jeton IA invalide.", 401)
         return view(**kwargs)
 
     return wrapped_view
@@ -336,6 +473,466 @@ def reservation_with_trip(reservation_id: int) -> sqlite3.Row | None:
            FROM reservations r JOIN trips t ON t.id = r.trip_id WHERE r.id = ?""",
         (reservation_id,),
     ).fetchone()
+
+
+def city_from_text(value: str) -> str | None:
+    """Reconnaît une ville autorisée depuis un message court."""
+    normalized = value.strip().casefold()
+    for city in CITIES:
+        if normalized == city.casefold():
+            return city
+    return None
+
+
+def whatsapp_tables_ready() -> None:
+    """Prépare les tables utilisées par le bot WhatsApp."""
+    db = get_db()
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS whatsapp_conversations (
+               phone TEXT PRIMARY KEY,
+               step TEXT NOT NULL DEFAULT 'ASK_ORIGIN',
+               data TEXT NOT NULL DEFAULT '{}',
+               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS whatsapp_messages (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               phone TEXT NOT NULL,
+               direction TEXT NOT NULL CHECK (direction IN ('IN', 'OUT')),
+               message TEXT NOT NULL,
+               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+
+
+def whatsapp_log(phone: str, direction: str, message: str) -> None:
+    """Garde une trace simple des échanges WhatsApp."""
+    whatsapp_tables_ready()
+    get_db().execute(
+        "INSERT INTO whatsapp_messages (phone, direction, message) VALUES (?, ?, ?)",
+        (phone[:40], direction, message[:2000]),
+    )
+    get_db().commit()
+
+
+def whatsapp_conversation(phone: str) -> tuple[str, dict]:
+    """Retourne l'étape de conversation courante d'un client WhatsApp."""
+    whatsapp_tables_ready()
+    row = get_db().execute("SELECT step, data FROM whatsapp_conversations WHERE phone = ?", (phone,)).fetchone()
+    if row is None:
+        return "ASK_ORIGIN", {}
+    try:
+        data = json.loads(row["data"])
+    except json.JSONDecodeError:
+        data = {}
+    return row["step"], data if isinstance(data, dict) else {}
+
+
+def save_whatsapp_conversation(phone: str, step: str, data: dict) -> None:
+    """Enregistre l'étape courante d'un client WhatsApp."""
+    whatsapp_tables_ready()
+    get_db().execute(
+        """INSERT INTO whatsapp_conversations (phone, step, data, updated_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(phone) DO UPDATE SET
+               step = excluded.step,
+               data = excluded.data,
+               updated_at = CURRENT_TIMESTAMP""",
+        (phone, step, json.dumps(data, ensure_ascii=False)),
+    )
+    get_db().commit()
+
+
+def reset_whatsapp_conversation(phone: str) -> None:
+    """Redémarre le dialogue d'un client."""
+    save_whatsapp_conversation(phone, "ASK_ORIGIN", {})
+
+
+def whatsapp_city_prompt() -> str:
+    """Message de sélection des villes."""
+    cities = "\n".join(f"- {city}" for city in CITIES)
+    return (
+        "Bonjour 👋 Bienvenue à la billetterie.\n"
+        "Je peux vous aider à réserver un billet.\n\n"
+        "Dites-moi d'abord votre ville de départ :\n"
+        f"{cities}\n\n"
+        "Si vous voulez recommencer, écrivez simplement MENU."
+    )
+
+
+def available_trips_for_bot(origin: str, destination: str) -> list[sqlite3.Row]:
+    """Liste les prochains trajets disponibles pour le bot."""
+    return get_db().execute(
+        """SELECT t.*, t.seat_count - COUNT(r.id) AS available_seats
+           FROM trips t
+           LEFT JOIN reservations r ON r.trip_id = t.id AND r.status != 'ANNULE'
+           WHERE t.origin = ? AND t.destination = ? AND datetime(t.departure_at) >= datetime('now', '-1 day')
+           GROUP BY t.id
+           HAVING available_seats > 0
+           ORDER BY t.departure_at
+           LIMIT 8""",
+        (origin, destination),
+    ).fetchall()
+
+
+def create_bot_reservation(trip_id: int, customer_name: str, customer_phone: str, source: str = "WHATSAPP") -> sqlite3.Row:
+    """Crée une réservation issue du bot avec attribution automatique du siège."""
+    db = get_db()
+    trip = db.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    if trip is None:
+        raise ValueError("Trajet introuvable.")
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        occupied = {
+            row["seat_number"] for row in db.execute(
+                "SELECT seat_number FROM reservations WHERE trip_id = ? AND status != 'ANNULE'",
+                (trip_id,),
+            )
+        }
+        seat_number = next((number for number in range(1, trip["seat_count"] + 1) if number not in occupied), None)
+        if seat_number is None:
+            raise ValueError("Ce trajet est complet.")
+        cursor = db.execute(
+            """INSERT INTO reservations
+               (trip_id, customer_name, customer_phone, seat_number, amount, verification_token)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (trip_id, customer_name, customer_phone, seat_number, trip["price"], secrets.token_urlsafe(24)),
+        )
+        reservation_id = cursor.lastrowid
+        prefix = get_settings()["ticket_prefix"]
+        db.execute("UPDATE reservations SET ticket_number = ? WHERE id = ?", (ticket_number(reservation_id, prefix), reservation_id))
+        audit(f"{source}_RESERVATION_CREATED", f"Reservation {reservation_id}; siege {seat_number}")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    reservation = reservation_with_trip(reservation_id)
+    if reservation is None:
+        raise ValueError("Reservation introuvable apres creation.")
+    return reservation
+
+
+def format_bot_trip(row: sqlite3.Row, index: int) -> str:
+    """Formate un trajet en une ligne lisible dans WhatsApp."""
+    settings = get_settings()
+    return (
+        f"{index}. {row['origin']} → {row['destination']}\n"
+        f"   Départ : {format_date(row['departure_at'])}\n"
+        f"   Places restantes : {row['available_seats']}\n"
+        f"   Prix : {row['price']:.0f} {settings['currency']}"
+    )
+
+
+def whatsapp_bot_reply(phone: str, incoming_text: str) -> str:
+    """Produit la réponse du bot et modifie l'état de conversation."""
+    text = incoming_text.strip()
+    lowered = text.casefold()
+    if lowered in {"bonjour", "salut", "hello", "menu", "start", "aide", "annuler"}:
+        reset_whatsapp_conversation(phone)
+        return whatsapp_city_prompt()
+
+    step, data = whatsapp_conversation(phone)
+    if step == "ASK_ORIGIN":
+        origin = city_from_text(text)
+        if origin is None:
+            return whatsapp_city_prompt()
+        data = {"origin": origin}
+        save_whatsapp_conversation(phone, "ASK_DESTINATION", data)
+        return f"D'accord, départ depuis {origin}.\n\nQuelle est votre destination ?\n" + "\n".join(f"- {city}" for city in CITIES if city != origin)
+
+    if step == "ASK_DESTINATION":
+        destination = city_from_text(text)
+        origin = data.get("origin")
+        if destination is None or destination == origin:
+            return "Je n'ai pas reconnu cette destination. Choisissez une ville dans la liste :\n" + "\n".join(f"- {city}" for city in CITIES if city != origin)
+        trips = available_trips_for_bot(origin, destination)
+        if not trips:
+            reset_whatsapp_conversation(phone)
+            return f"Désolé, je ne vois aucun trajet disponible pour {origin} → {destination} pour le moment.\n\nEnvoyez MENU pour essayer un autre trajet."
+        data["destination"] = destination
+        data["trip_options"] = [trip["id"] for trip in trips]
+        save_whatsapp_conversation(phone, "ASK_TRIP", data)
+        trip_lines = "\n\n".join(format_bot_trip(trip, index) for index, trip in enumerate(trips, 1))
+        return f"Parfait, voici les trajets disponibles :\n\n{trip_lines}\n\nRépondez avec le numéro du trajet qui vous convient. Exemple : 1"
+
+    if step == "ASK_TRIP":
+        options = data.get("trip_options", [])
+        if not isinstance(options, list) or not options:
+            reset_whatsapp_conversation(phone)
+            return whatsapp_city_prompt()
+        try:
+            choice = int(text)
+        except ValueError:
+            return "Je n'ai pas compris le choix. Répondez juste avec le numéro du trajet. Exemple : 1"
+        if choice < 1 or choice > len(options):
+            return "Ce numéro n'est pas dans la liste. Envoyez le numéro du trajet choisi."
+        data["trip_id"] = options[choice - 1]
+        save_whatsapp_conversation(phone, "ASK_NAME", data)
+        return "Très bien 👍\nEnvoyez maintenant le nom complet du passager."
+
+    if step == "ASK_NAME":
+        customer_name = " ".join(text.split())
+        if len(customer_name) < 3:
+            return "Le nom semble trop court. Envoyez le nom complet du passager, s'il vous plaît."
+        try:
+            reservation = create_bot_reservation(int(data["trip_id"]), customer_name, phone)
+        except (KeyError, TypeError, ValueError, sqlite3.IntegrityError) as exc:
+            reset_whatsapp_conversation(phone)
+            return f"Désolé, je n'ai pas pu créer la réservation : {exc}\n\nEnvoyez MENU pour recommencer."
+        reset_whatsapp_conversation(phone)
+        verify_url = url_for("verify_ticket", token=reservation["verification_token"], _external=True)
+        pdf_url = url_for("ticket_pdf", token=reservation["verification_token"], _external=True)
+        payment_message = "Paiement : un agent va vous indiquer la procédure."
+        if shwary_configured():
+            try:
+                payment_request = start_shwary_payment(reservation, phone)
+                payment_message = (
+                    "Paiement : une demande Shwary vient d'être envoyée sur votre téléphone. "
+                    f"Référence : {payment_request['reference_id']}"
+                )
+            except Exception:
+                payment_message = "Paiement : la demande automatique n'a pas pu partir. Un agent va vous aider."
+        return (
+            "C'est bon, votre réservation est créée ✅\n\n"
+            f"Billet : {reservation['ticket_number']}\n"
+            f"Passager : {reservation['customer_name']}\n"
+            f"Trajet : {reservation['origin']} → {reservation['destination']}\n"
+            f"Départ : {format_date(reservation['departure_at'])}\n"
+            f"Siège : {reservation['seat_number']}\n"
+            f"Prix : {reservation['amount']:.0f} {get_settings()['currency']}\n"
+            f"Statut : {reservation['status']}\n\n"
+            f"{payment_message}\n"
+            "Votre billet sera confirmé après le paiement.\n"
+            f"Billet PDF : {pdf_url}\n"
+            f"Lien de contrôle : {verify_url}\n\n"
+            "Merci et bon voyage."
+        )
+
+    reset_whatsapp_conversation(phone)
+    return whatsapp_city_prompt()
+
+
+def extract_whatsapp_text_messages(payload: dict) -> list[tuple[str, str]]:
+    """Extrait les messages texte entrants du format webhook WhatsApp."""
+    extracted: list[tuple[str, str]] = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            for message in value.get("messages", []):
+                phone = str(message.get("from", "")).strip()
+                if message.get("type") == "text":
+                    text = str(message.get("text", {}).get("body", "")).strip()
+                else:
+                    text = ""
+                if phone and text:
+                    extracted.append((phone, text))
+    return extracted
+
+
+def send_whatsapp_text(phone: str, message: str) -> bool:
+    """Envoie un message texte avec WhatsApp Cloud API si les secrets sont configurés."""
+    access_token = app.config["WHATSAPP_ACCESS_TOKEN"]
+    phone_number_id = app.config["WHATSAPP_PHONE_NUMBER_ID"]
+    if not access_token or not phone_number_id:
+        return False
+    url = f"https://graph.facebook.com/{app.config['WHATSAPP_GRAPH_VERSION']}/{phone_number_id}/messages"
+    body = json.dumps({
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "text",
+        "text": {"preview_url": False, "body": message},
+    }).encode("utf-8")
+    api_request = urlrequest.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(api_request, timeout=15):
+            return True
+    except urlerror.URLError:
+        return False
+
+
+def payment_requests_ready() -> None:
+    """Prepare la table de suivi des paiements reseau."""
+    get_db().execute(
+        """CREATE TABLE IF NOT EXISTS payment_requests (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               reservation_id INTEGER NOT NULL REFERENCES reservations(id),
+               provider TEXT NOT NULL,
+               provider_transaction_id TEXT,
+               reference_id TEXT NOT NULL UNIQUE,
+               status TEXT NOT NULL DEFAULT 'PENDING',
+               amount REAL NOT NULL,
+               currency TEXT NOT NULL,
+               phone TEXT NOT NULL,
+               country_code TEXT NOT NULL,
+               checkout_payload TEXT,
+               failure_reason TEXT,
+               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+
+
+def normalize_payment_phone(phone: str) -> str:
+    """Normalise un numero client pour un paiement mobile money."""
+    cleaned = "".join(character for character in phone if character.isdigit() or character == "+")
+    if cleaned.startswith("00"):
+        cleaned = "+" + cleaned[2:]
+    if cleaned.startswith("0"):
+        cleaned = "+243" + cleaned[1:]
+    if cleaned.startswith("243"):
+        cleaned = "+" + cleaned
+    return cleaned
+
+
+def shwary_configured() -> bool:
+    """Indique si les identifiants Shwary sont disponibles."""
+    return bool(app.config["SHWARY_MERCHANT_ID"] and app.config["SHWARY_MERCHANT_KEY"])
+
+
+def shwary_headers() -> dict[str, str]:
+    """Construit les en-tetes d'authentification Shwary."""
+    return {
+        "Content-Type": "application/json",
+        "x-merchant-id": app.config["SHWARY_MERCHANT_ID"],
+        "x-merchant-key": app.config["SHWARY_MERCHANT_KEY"],
+    }
+
+
+def shwary_status_from_payload(payload: dict) -> str:
+    """Normalise un statut Shwary en statut interne."""
+    raw_status = str(
+        payload.get("status")
+        or payload.get("transactionStatus")
+        or payload.get("paymentStatus")
+        or payload.get("state")
+        or ""
+    ).strip().casefold()
+    if raw_status in {"completed", "success", "successful", "paid", "approved", "succeeded"}:
+        return "COMPLETED"
+    if raw_status in {"failed", "failure", "cancelled", "canceled", "rejected", "expired"}:
+        return "FAILED"
+    return "PENDING"
+
+
+def reservation_reference_row(reference: str) -> sqlite3.Row | None:
+    """Retrouve une reservation par id numerique ou numero de billet."""
+    if reference.isdigit():
+        return reservation_with_trip(int(reference))
+    return get_db().execute(
+        """SELECT r.*, t.origin, t.destination, t.departure_at
+           FROM reservations r JOIN trips t ON t.id = r.trip_id
+           WHERE r.ticket_number = ?""",
+        (reference,),
+    ).fetchone()
+
+
+def start_shwary_payment(reservation: sqlite3.Row, phone: str | None = None) -> sqlite3.Row:
+    """Cree une demande de paiement Shwary et appelle l'API du fournisseur."""
+    if not shwary_configured():
+        raise RuntimeError("Configuration Shwary manquante.")
+    payment_requests_ready()
+    customer_phone = normalize_payment_phone(phone or reservation["customer_phone"])
+    reference_id = f"{reservation['ticket_number']}-{secrets.token_hex(4)}"
+    amount = math.ceil(float(reservation["amount"]))
+    settings = get_settings()
+    shwary_currency = "CDF" if settings["currency"].upper() in {"FC", "CDF"} else settings["currency"].upper()
+    country_code = app.config["SHWARY_COUNTRY_CODE"]
+    callback_url = app.config["SHWARY_CALLBACK_URL"] or url_for("shwary_webhook_receive", _external=True)
+    payload = {
+        "amount": amount,
+        "currency": shwary_currency,
+        "phoneNumber": customer_phone,
+        "reference": reference_id,
+        "referenceId": reference_id,
+        "description": f"Billet {reservation['ticket_number']}",
+        "callbackUrl": callback_url,
+        "customer": {
+            "name": reservation["customer_name"],
+            "phone": customer_phone,
+        },
+    }
+    request_row_id = None
+    db = get_db()
+    try:
+        cursor = db.execute(
+            """INSERT INTO payment_requests
+               (reservation_id, provider, reference_id, status, amount, currency, phone, country_code, checkout_payload)
+               VALUES (?, 'SHWARY', ?, 'PENDING', ?, ?, ?, ?, ?)""",
+            (
+                reservation["id"],
+                reference_id,
+                amount,
+                shwary_currency,
+                customer_phone,
+                country_code,
+                json.dumps(payload, ensure_ascii=False),
+            ),
+        )
+        request_row_id = cursor.lastrowid
+        url = f"{app.config['SHWARY_API_BASE'].rstrip('/')}/api/v1/merchants/payment/{country_code}"
+        api_request = urlrequest.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=shwary_headers(),
+            method="POST",
+        )
+        with urlrequest.urlopen(api_request, timeout=20) as response:
+            response_payload = json.loads(response.read().decode("utf-8") or "{}")
+        provider_id = str(
+            response_payload.get("transactionId")
+            or response_payload.get("transactionID")
+            or response_payload.get("id")
+            or response_payload.get("paymentId")
+            or ""
+        )
+        db.execute(
+            """UPDATE payment_requests
+               SET provider_transaction_id = ?, checkout_payload = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (provider_id or None, json.dumps(response_payload, ensure_ascii=False), request_row_id),
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        if request_row_id:
+            db.execute(
+                """UPDATE payment_requests
+                   SET status = 'FAILED', failure_reason = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (str(exc)[:500], request_row_id),
+            )
+            db.commit()
+        raise
+    return db.execute("SELECT * FROM payment_requests WHERE id = ?", (request_row_id,)).fetchone()
+
+
+def complete_network_payment(reservation_id: int, provider: str) -> None:
+    """Marque un paiement reseau reussi dans l'historique comptable."""
+    db = get_db()
+    reservation = db.execute("SELECT * FROM reservations WHERE id = ?", (reservation_id,)).fetchone()
+    if reservation is None or reservation["status"] != "EN_ATTENTE":
+        return
+    active_payment = db.execute(
+        "SELECT 1 FROM payments WHERE reservation_id = ? AND voided_at IS NULL",
+        (reservation_id,),
+    ).fetchone()
+    if active_payment:
+        return
+    db.execute(
+        "INSERT INTO payments (reservation_id, method, amount, received_by) VALUES (?, ?, ?, NULL)",
+        (reservation_id, provider, reservation["amount"]),
+    )
+    db.execute("UPDATE reservations SET status = 'PAYE' WHERE id = ?", (reservation_id,))
+    audit("NETWORK_PAYMENT_RECORDED", f"{provider}; {reservation['ticket_number']}; {reservation['amount']}")
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -698,8 +1295,21 @@ def reservation_detail(reservation_id: int):
            WHERE p.reservation_id = ? ORDER BY p.paid_at DESC""",
         (reservation_id,),
     ).fetchall()
+    payment_requests_ready()
+    network_payments = get_db().execute(
+        """SELECT * FROM payment_requests
+           WHERE reservation_id = ? ORDER BY created_at DESC""",
+        (reservation_id,),
+    ).fetchall()
     qr_value = url_for("verify_ticket", token=row["verification_token"], _external=True)
-    return render_template("reservation_detail.html", reservation=row, payments=payments, qr_code=qr_code_data_uri(qr_value))
+    return render_template(
+        "reservation_detail.html",
+        reservation=row,
+        payments=payments,
+        network_payments=network_payments,
+        shwary_ready=shwary_configured(),
+        qr_code=qr_code_data_uri(qr_value),
+    )
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -871,6 +1481,25 @@ def verify_ticket(token: str):
     return render_template("verify_ticket.html", reservation=reservation, token=token)
 
 
+@app.get("/tickets/<token>.pdf")
+def ticket_pdf(token: str):
+    """Telecharge le billet PDF depuis le token QR du billet."""
+    reservation = get_db().execute(
+        """SELECT r.*, t.origin, t.destination, t.departure_at
+           FROM reservations r JOIN trips t ON t.id = r.trip_id
+           WHERE r.verification_token = ?""",
+        (token,),
+    ).fetchone()
+    if reservation is None:
+        abort(404)
+    return send_file(
+        BytesIO(build_ticket_pdf(reservation)),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{reservation['ticket_number']}.pdf",
+    )
+
+
 @app.post("/verify/<token>/use")
 @login_required
 def use_verified_ticket(token: str):
@@ -896,6 +1525,72 @@ def scanner():
     return render_template("scanner.html")
 
 
+@app.get("/webhooks/whatsapp")
+def whatsapp_webhook_verify():
+    """Vérifie le webhook demandé par Meta WhatsApp Cloud API."""
+    mode = request.args.get("hub.mode", "")
+    token = request.args.get("hub.verify_token", "")
+    challenge = request.args.get("hub.challenge", "")
+    expected = app.config["WHATSAPP_VERIFY_TOKEN"]
+    if mode == "subscribe" and expected and secrets.compare_digest(token, expected):
+        return Response(challenge, mimetype="text/plain")
+    return jsonify({"error": "Verification WhatsApp refusee."}), 403
+
+
+@app.post("/webhooks/whatsapp")
+def whatsapp_webhook_receive():
+    """Reçoit les messages WhatsApp, répond au client et mémorise la conversation."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"received": False, "error": "JSON invalide."}), 400
+    responses = []
+    for phone, incoming_text in extract_whatsapp_text_messages(payload):
+        whatsapp_log(phone, "IN", incoming_text)
+        reply = whatsapp_bot_reply(phone, incoming_text)
+        sent = send_whatsapp_text(phone, reply)
+        whatsapp_log(phone, "OUT", reply)
+        responses.append({"phone": phone, "reply": reply, "sent": sent})
+    return jsonify({"received": True, "responses": responses})
+
+
+@app.post("/webhooks/shwary")
+def shwary_webhook_receive():
+    """Reçoit les callbacks Shwary et marque le paiement si la transaction est réussie."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"received": False, "error": "JSON invalide."}), 400
+    reference = str(payload.get("reference") or payload.get("referenceId") or payload.get("merchantReference") or "").strip()
+    provider_id = str(payload.get("transactionId") or payload.get("transactionID") or payload.get("id") or "").strip()
+    status = shwary_status_from_payload(payload)
+    db = get_db()
+    payment_requests_ready()
+    if reference:
+        request_row = db.execute("SELECT * FROM payment_requests WHERE reference_id = ?", (reference,)).fetchone()
+    elif provider_id:
+        request_row = db.execute("SELECT * FROM payment_requests WHERE provider_transaction_id = ?", (provider_id,)).fetchone()
+    else:
+        request_row = None
+    if request_row is None:
+        return jsonify({"received": True, "matched": False})
+    db.execute(
+        """UPDATE payment_requests
+           SET status = ?, provider_transaction_id = COALESCE(?, provider_transaction_id),
+               checkout_payload = ?, failure_reason = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?""",
+        (
+            status,
+            provider_id or None,
+            json.dumps(payload, ensure_ascii=False),
+            None if status == "COMPLETED" else str(payload.get("message") or payload.get("reason") or "")[:500],
+            request_row["id"],
+        ),
+    )
+    if status == "COMPLETED":
+        complete_network_payment(request_row["reservation_id"], "SHWARY")
+    db.commit()
+    return jsonify({"received": True, "matched": True, "status": status})
+
+
 @app.get("/api")
 @api_login_required
 def api_index():
@@ -916,6 +1611,14 @@ def api_index():
             "settings": "/api/settings",
             "verify_ticket": "/api/verify/<token>",
             "use_verified_ticket": "/api/verify/<token>/use",
+            "whatsapp_webhook": "/webhooks/whatsapp",
+            "ai_capabilities": "/api/ai/capabilities",
+            "ai_context": "/api/ai/context",
+            "ai_search_trips": "/api/ai/trips/search",
+            "ai_create_reservation": "/api/ai/reservations",
+            "ai_ticket_pdf": "/api/ai/reservations/<reference>/ticket.pdf",
+            "ai_shwary_payment": "/api/ai/reservations/<reference>/payments/shwary",
+            "shwary_webhook": "/webhooks/shwary",
         },
     })
 
@@ -927,6 +1630,232 @@ def api_health():
         "status": "ok",
         "service": "billetterie",
         "time": datetime.now().isoformat(timespec="seconds"),
+    })
+
+
+@app.get("/api/ai/capabilities")
+@ai_api_required
+def api_ai_capabilities():
+    """Décrit ce qu'une IA externe peut faire avec la billetterie."""
+    return jsonify({
+        "name": "API IA Billetterie",
+        "version": "1.0",
+        "language": "fr",
+        "auth": "Authorization: Bearer <AI_API_TOKEN>",
+        "conversation_style": {
+            "tone": "naturel, poli, simple et rassurant",
+            "rules": [
+                "Répondre comme un agent humain de billetterie.",
+                "Utiliser des phrases courtes.",
+                "Ne pas parler comme un robot.",
+                "Guider le client étape par étape.",
+                "Confirmer clairement les informations importantes.",
+                "Ne pas inventer de trajet, prix, siège ou statut.",
+            ],
+        },
+        "capabilities": {
+            "read_business_context": True,
+            "search_available_trips": True,
+            "create_reservation": True,
+            "automatic_seat_assignment": True,
+            "read_reservation": True,
+            "record_payment": False,
+            "confirm_payment": False,
+            "start_shwary_payment": True,
+            "generate_ticket_pdf": True,
+            "admin_actions": False,
+        },
+        "endpoints": {
+            "context": "/api/ai/context",
+            "search_trips": "/api/ai/trips/search",
+            "create_reservation": "/api/ai/reservations",
+            "read_reservation": "/api/ai/reservations/<reference>",
+            "ticket_pdf": "/api/ai/reservations/<reference>/ticket.pdf",
+            "shwary_payment": "/api/ai/reservations/<reference>/payments/shwary",
+        },
+    })
+
+
+@app.get("/api/ai/context")
+@ai_api_required
+def api_ai_context():
+    """Fournit à l'IA le contexte métier non sensible de la billetterie."""
+    settings = get_settings()
+    fares = [
+        {"origin": origin, "destination": destination, "price": price}
+        for (origin, destination), price in sorted(get_fares().items())
+    ]
+    next_trips = get_db().execute(
+        """SELECT t.*, t.seat_count - COUNT(r.id) AS available_seats
+           FROM trips t
+           LEFT JOIN reservations r ON r.trip_id = t.id AND r.status != 'ANNULE'
+           WHERE datetime(t.departure_at) >= datetime('now', '-1 day')
+           GROUP BY t.id
+           HAVING available_seats > 0
+           ORDER BY t.departure_at
+           LIMIT 10"""
+    ).fetchall()
+    return jsonify({
+        "agency": {
+            "name": settings["agency_name"],
+            "address": settings["agency_address"],
+            "phone": settings["agency_phone"],
+            "currency": settings["currency"],
+        },
+        "business_rules": [
+            "Les villes autorisées sont fixes.",
+            "Le siège est attribué automatiquement par le système.",
+            "Le client ne choisit pas le siège.",
+            "Une réservation créée par l'IA reste en attente jusqu'au paiement et à la confirmation.",
+            "Les paiements et confirmations restent réservés aux agents autorisés dans le logiciel.",
+        ],
+        "assistant_style": {
+            "role": "Agent de réservation WhatsApp pour une billetterie de transport.",
+            "tone": "naturel, chaleureux, clair et professionnel.",
+            "examples": [
+                "Bonjour 👋 Je peux vous aider à réserver un billet.",
+                "D'accord, vous partez de Likasi. Quelle est votre destination ?",
+                "Parfait, voici les trajets disponibles.",
+                "C'est bon, votre réservation est créée ✅",
+            ],
+        },
+        "cities": list(CITIES),
+        "fares": fares,
+        "next_available_trips": [serialize_trip(row) for row in next_trips],
+    })
+
+
+@app.post("/api/ai/trips/search")
+@ai_api_required
+def api_ai_search_trips():
+    """Recherche les trajets disponibles pour une IA conversationnelle."""
+    payload = json_payload()
+    origin = city_from_text(str(payload.get("origin", "")))
+    destination = city_from_text(str(payload.get("destination", "")))
+    travel_date = str(payload.get("date", "")).strip()
+    if origin is None or destination is None or origin == destination:
+        return api_error("origin et destination doivent être deux villes différentes.")
+    clauses = [
+        "t.origin = ?",
+        "t.destination = ?",
+        "datetime(t.departure_at) >= datetime('now', '-1 day')",
+    ]
+    parameters: list[object] = [origin, destination]
+    if travel_date:
+        clauses.append("date(t.departure_at) = date(?)")
+        parameters.append(travel_date)
+    rows = get_db().execute(
+        f"""SELECT t.*, t.seat_count - COUNT(r.id) AS available_seats
+            FROM trips t
+            LEFT JOIN reservations r ON r.trip_id = t.id AND r.status != 'ANNULE'
+            WHERE {' AND '.join(clauses)}
+            GROUP BY t.id
+            HAVING available_seats > 0
+            ORDER BY t.departure_at
+            LIMIT 20""",
+        parameters,
+    ).fetchall()
+    return jsonify({
+        "origin": origin,
+        "destination": destination,
+        "date": travel_date or None,
+        "trips": [serialize_trip(row) for row in rows],
+    })
+
+
+@app.post("/api/ai/reservations")
+@ai_api_required
+def api_ai_create_reservation():
+    """Crée une réservation demandée par une IA, sans choix manuel du siège."""
+    payload = json_payload()
+    trip_id = payload.get("trip_id")
+    customer_name = " ".join(str(payload.get("customer_name", "")).split())
+    customer_phone = " ".join(str(payload.get("customer_phone", "")).split())
+    if not isinstance(trip_id, int) or not customer_name or not customer_phone:
+        return api_error("trip_id, customer_name et customer_phone sont obligatoires.")
+    try:
+        reservation = create_bot_reservation(trip_id, customer_name, customer_phone, source="AI")
+    except ValueError as exc:
+        return api_error(str(exc), 409)
+    except sqlite3.IntegrityError:
+        return api_error("Ce siège vient d'être réservé par un autre client.", 409)
+    return jsonify({
+        "message": "Réservation créée par l'IA.",
+        "reservation": serialize_reservation(reservation),
+        "next_step": "Faire payer le client puis confirmer le billet dans le logiciel.",
+    }), 201
+
+
+@app.get("/api/ai/reservations/<reference>")
+@ai_api_required
+def api_ai_reservation_detail(reference: str):
+    """Lit une réservation par identifiant numérique ou numéro de billet."""
+    db = get_db()
+    if reference.isdigit():
+        row = reservation_with_trip(int(reference))
+    else:
+        row = db.execute(
+            """SELECT r.*, t.origin, t.destination, t.departure_at
+               FROM reservations r JOIN trips t ON t.id = r.trip_id
+               WHERE r.ticket_number = ?""",
+            (reference,),
+        ).fetchone()
+    if row is None:
+        return api_error("Réservation introuvable.", 404)
+    return jsonify({"reservation": serialize_reservation(row)})
+
+
+@app.get("/api/ai/reservations/<reference>/ticket.pdf")
+@ai_api_required
+def api_ai_ticket_pdf(reference: str):
+    """Telecharge le billet au format PDF pour un bot ou une IA."""
+    row = reservation_reference_row(reference)
+    if row is None:
+        return api_error("Reservation introuvable.", 404)
+    return send_file(
+        BytesIO(build_ticket_pdf(row)),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{row['ticket_number']}.pdf",
+    )
+
+
+@app.post("/api/ai/reservations/<reference>/payments/shwary")
+@ai_api_required
+def api_ai_start_shwary_payment(reference: str):
+    """Demande un paiement reseau via Shwary pour une reservation."""
+    row = reservation_reference_row(reference)
+    if row is None:
+        return api_error("Reservation introuvable.", 404)
+    if row["status"] != "EN_ATTENTE":
+        return api_error("Cette reservation ne peut plus recevoir une demande de paiement.", 409)
+    payload = json_payload()
+    phone = str(payload.get("phone") or row["customer_phone"]).strip()
+    try:
+        payment_request = start_shwary_payment(row, phone)
+    except RuntimeError as exc:
+        return api_error(str(exc), 503)
+    except Exception as exc:
+        return api_error(f"Demande Shwary impossible : {exc}", 502)
+    return jsonify({
+        "message": "Demande de paiement Shwary envoyee.",
+        "payment_request": dict(payment_request),
+        "instruction": "Le client doit valider le paiement sur son telephone. Le statut sera mis a jour par le callback Shwary.",
+    }), 201
+
+
+@app.get("/api/ai/payments/shwary/<reference_id>")
+@ai_api_required
+def api_ai_shwary_payment_status(reference_id: str):
+    """Lit le statut local d'une demande de paiement Shwary."""
+    payment_requests_ready()
+    row = get_db().execute("SELECT * FROM payment_requests WHERE reference_id = ?", (reference_id,)).fetchone()
+    if row is None:
+        return api_error("Demande de paiement introuvable.", 404)
+    reservation = reservation_with_trip(row["reservation_id"])
+    return jsonify({
+        "payment_request": dict(row),
+        "reservation": serialize_reservation(reservation) if reservation else None,
     })
 
 
@@ -953,6 +1882,8 @@ def api_docs():
             "can_confirm_ticket": True,
             "can_verify_qr_ticket": True,
             "can_mark_boarding_used": True,
+            "has_whatsapp_webhook": True,
+            "has_ai_api": True,
         },
         "endpoints": [
             {"method": "GET", "path": "/api/health", "auth": False, "purpose": "Verifier que l'API repond."},
@@ -970,6 +1901,17 @@ def api_docs():
             {"method": "POST", "path": "/api/verify/<token>/use", "auth": True, "purpose": "Marquer un billet confirme comme utilise a l'embarquement."},
             {"method": "GET", "path": "/api/payments", "auth": True, "purpose": "Lister les paiements recents."},
             {"method": "GET", "path": "/api/settings", "auth": "admin", "purpose": "Lire les parametres, villes et tarifs."},
+            {"method": "GET", "path": "/webhooks/whatsapp", "auth": "verify_token", "purpose": "Verifier le webhook WhatsApp Cloud API."},
+            {"method": "POST", "path": "/webhooks/whatsapp", "auth": "meta_webhook", "purpose": "Recevoir les messages WhatsApp et guider une reservation."},
+            {"method": "GET", "path": "/api/ai/capabilities", "auth": "AI_API_TOKEN", "purpose": "Lire les capacités disponibles pour une IA."},
+            {"method": "GET", "path": "/api/ai/context", "auth": "AI_API_TOKEN", "purpose": "Lire le contexte métier non sensible."},
+            {"method": "POST", "path": "/api/ai/trips/search", "auth": "AI_API_TOKEN", "purpose": "Rechercher les trajets disponibles."},
+            {"method": "POST", "path": "/api/ai/reservations", "auth": "AI_API_TOKEN", "purpose": "Creer une reservation par IA avec siege automatique."},
+            {"method": "GET", "path": "/api/ai/reservations/<reference>", "auth": "AI_API_TOKEN", "purpose": "Lire une reservation par id ou numero de billet."},
+            {"method": "GET", "path": "/api/ai/reservations/<reference>/ticket.pdf", "auth": "AI_API_TOKEN", "purpose": "Telecharger le billet au format PDF."},
+            {"method": "POST", "path": "/api/ai/reservations/<reference>/payments/shwary", "auth": "AI_API_TOKEN", "purpose": "Lancer une demande de paiement Shwary."},
+            {"method": "GET", "path": "/api/ai/payments/shwary/<reference_id>", "auth": "AI_API_TOKEN", "purpose": "Lire le statut local d'une demande Shwary."},
+            {"method": "POST", "path": "/webhooks/shwary", "auth": "callback", "purpose": "Recevoir le statut de paiement envoye par Shwary."},
         ],
     })
 
@@ -1352,6 +2294,43 @@ def record_payment(reservation_id: int):
     audit("PAYMENT_RECORDED", f"{reservation['ticket_number']}; {method}; {reservation['amount']}")
     db.commit()
     flash("Paiement enregistré.", "success")
+    return redirect(url_for("reservation_detail", reservation_id=reservation_id))
+
+
+@app.get("/reservations/<int:reservation_id>/ticket.pdf")
+@login_required
+def reservation_ticket_pdf(reservation_id: int):
+    """Telecharge le billet PDF depuis la fiche reservation."""
+    reservation = reservation_with_trip(reservation_id)
+    if reservation is None:
+        abort(404)
+    return send_file(
+        BytesIO(build_ticket_pdf(reservation)),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{reservation['ticket_number']}.pdf",
+    )
+
+
+@app.post("/reservations/<int:reservation_id>/payments/shwary")
+@login_required
+def start_web_shwary_payment(reservation_id: int):
+    """Lance une demande de paiement Shwary depuis le site web."""
+    reservation = reservation_with_trip(reservation_id)
+    if reservation is None:
+        abort(404)
+    if reservation["status"] != "EN_ATTENTE":
+        flash("Shwary ne peut être lancé que pour un billet en attente.", "error")
+        return redirect(url_for("reservation_detail", reservation_id=reservation_id))
+    phone = request.form.get("phone", "").strip() or reservation["customer_phone"]
+    try:
+        payment_request = start_shwary_payment(reservation, phone)
+    except RuntimeError as exc:
+        flash(str(exc), "error")
+    except Exception as exc:
+        flash(f"Demande Shwary impossible : {exc}", "error")
+    else:
+        flash(f"Demande Shwary envoyée. Référence : {payment_request['reference_id']}", "success")
     return redirect(url_for("reservation_detail", reservation_id=reservation_id))
 
 
