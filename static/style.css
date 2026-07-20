@@ -73,6 +73,8 @@ dd { margin:0; }
 .settings-save { justify-self:start; }
 .settings-user-button { margin-top:16px; }
 .ticket-section { margin-top:24px; }
+.ticket-section-main { margin-bottom:24px; }
+.reservation-info-after-ticket { margin-top:0; }
 .ticket-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
 .ticket-heading p { margin:4px 0 0; }
 .ticket { max-width:800px; margin:auto; background:#fff; border:1px solid #cad5e1; border-radius:14px; overflow:hidden; box-shadow:0 8px 26px #15223518; }
@@ -119,6 +121,8 @@ dd { margin:0; }
   .settings-form { grid-template-columns:1fr; }.settings-form .card:last-of-type { grid-column:auto; }
   .fare-grid { grid-template-columns:1fr; }
   .ticket-grid { grid-template-columns:1fr 1fr; }.ticket-route { font-size:1.05rem; gap:14px; }.ticket-brand, .ticket-bottom { padding:16px; }
+  .ticket-heading { align-items:flex-start; flex-direction:column; gap:12px; }
+  .ticket-actions { width:100%; }.ticket-actions .button { flex:1; text-align:center; }
   .help-grid { grid-template-columns:1fr; }
 }
 

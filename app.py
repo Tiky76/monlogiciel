@@ -19,6 +19,7 @@ from urllib import request as urlrequest
 
 import click
 from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from PIL import Image
 from werkzeug.security import check_password_hash, generate_password_hash
 import qrcode
 
@@ -321,45 +322,115 @@ def pdf_text(value: object) -> str:
     return text.encode("latin-1", "replace").decode("latin-1").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
+def pdf_image_object(image: Image.Image) -> tuple[bytes, int, int]:
+    """Transforme une image PIL en objet PDF compresse."""
+    if image.mode in ("RGBA", "LA"):
+        background = Image.new("RGB", image.size, "white")
+        background.paste(image, mask=image.getchannel("A"))
+        image = background
+    else:
+        image = image.convert("RGB")
+    width, height = image.size
+    image_stream = zlib.compress(image.tobytes())
+    image_object = (
+        f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} "
+        f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(image_stream)} >>"
+    ).encode("ascii") + b"\nstream\n" + image_stream + b"\nendstream"
+    return image_object, width, height
+
+
 def build_ticket_pdf(reservation: sqlite3.Row) -> bytes:
-    """Genere un billet PDF simple avec les informations essentielles et un QR Code."""
+    """Genere un billet PDF moderne au format ticket avec logo, trajet et QR Code."""
     settings = get_settings()
     verify_url = url_for("verify_ticket", token=reservation["verification_token"], _external=True)
-    qr_image = qrcode.make(verify_url).convert("RGB").resize((132, 132))
-    qr_width, qr_height = qr_image.size
-    qr_stream = zlib.compress(qr_image.tobytes())
-    lines = [
-        (settings["agency_name"], 20, 390),
-        ("BILLET DE VOYAGE", 16, 365),
-        (f"Numero : {reservation['ticket_number']}", 11, 335),
-        (f"Passager : {reservation['customer_name']}", 11, 315),
-        (f"Trajet : {reservation['origin']} -> {reservation['destination']}", 11, 295),
-        (f"Depart : {format_date(reservation['departure_at'])}", 11, 275),
-        (f"Siege : {reservation['seat_number']}", 11, 255),
-        (f"Prix : {reservation['amount']:.0f} {settings['currency']}", 11, 235),
-        (f"Statut : {reservation['status']}", 11, 215),
-        (f"Agence : {settings['agency_name']}", 10, 190),
-        (settings["agency_phone"], 9, 176),
-        ("QR Code de controle", 10, 155),
-        (settings["ticket_footer"], 9, 25),
-    ]
-    text_commands = ["BT", "/F1 11 Tf"]
-    for text, size, y in lines:
-        text_commands.append(f"/F1 {size} Tf")
-        text_commands.append(f"38 {y} Td ({pdf_text(text)}) Tj")
-        text_commands.append(f"-38 {-y} Td")
-    text_commands.append("ET")
-    content = "\n".join(text_commands) + "\nq 132 0 0 132 38 45 cm /Im1 Do Q\n"
+    qr_image = qrcode.make(verify_url).convert("RGB").resize((122, 122))
+    qr_object, _, _ = pdf_image_object(qr_image)
+
+    logo_path = BASE_DIR / "static" / "logo.png"
+    logo_image = Image.open(logo_path).convert("RGB")
+    logo_image.thumbnail((54, 54))
+    logo_object, logo_width, logo_height = pdf_image_object(logo_image)
+
+    commands: list[str] = []
+
+    def fill_rect(x: int, y: int, width: int, height: int, color: tuple[float, float, float]) -> None:
+        commands.append(f"{color[0]} {color[1]} {color[2]} rg {x} {y} {width} {height} re f")
+
+    def stroke_rect(x: int, y: int, width: int, height: int, color: tuple[float, float, float]) -> None:
+        commands.append(f"{color[0]} {color[1]} {color[2]} RG {x} {y} {width} {height} re S")
+
+    def text(
+        value: object,
+        x: int,
+        y: int,
+        size: int = 10,
+        font: str = "F1",
+        color: tuple[float, float, float] = (0.02, 0.11, 0.20),
+    ) -> None:
+        commands.append(
+            f"{color[0]} {color[1]} {color[2]} rg BT /{font} {size} Tf {x} {y} Td ({pdf_text(value)}) Tj ET"
+        )
+
+    def image(name: str, x: int, y: int, width: int, height: int) -> None:
+        commands.append(f"q {width} 0 0 {height} {x} {y} cm /{name} Do Q")
+
+    fill_rect(0, 0, 420, 620, (0.95, 0.98, 0.99))
+    fill_rect(24, 24, 372, 572, (1, 1, 1))
+    stroke_rect(24, 24, 372, 572, (0.74, 0.80, 0.87))
+
+    image("Logo", 42, 536, logo_width, logo_height)
+    text(settings["agency_name"], 108, 572, 15, "F2")
+    text(settings["agency_address"], 108, 553, 9, "F1", (0.31, 0.39, 0.50))
+    if settings["agency_phone"]:
+        text(settings["agency_phone"], 108, 538, 9, "F1", (0.31, 0.39, 0.50))
+
+    fill_rect(302, 556, 70, 22, (1, 0.94, 0.83))
+    text(reservation["status"].replace("_", " "), 313, 563, 8, "F2", (0.70, 0.36, 0.03))
+    commands.append("0.72 0.77 0.83 RG 24 512 m 396 512 l S")
+
+    fill_rect(24, 452, 372, 60, (0.91, 0.96, 0.99))
+    text(reservation["origin"], 82, 486, 20, "F2", (0.02, 0.19, 0.20))
+    text("->", 206, 486, 16, "F2", (0.04, 0.46, 0.64))
+    text(reservation["destination"], 250, 486, 20, "F2", (0.02, 0.19, 0.20))
+
+    left_x = 46
+    right_x = 222
+    row_1 = 410
+    row_2 = 344
+    row_3 = 278
+    label_color = (0.38, 0.47, 0.58)
+    text("Numero de billet", left_x, row_1, 9, "F1", label_color)
+    text(reservation["ticket_number"], left_x, row_1 - 24, 12, "F2")
+    text("Passager", right_x, row_1, 9, "F1", label_color)
+    text(reservation["customer_name"], right_x, row_1 - 24, 12, "F2")
+
+    text("Date et heure de depart", left_x, row_2, 9, "F1", label_color)
+    text(format_date(reservation["departure_at"]), left_x, row_2 - 24, 12, "F2")
+    text("Siege", right_x, row_2, 9, "F1", label_color)
+    text(reservation["seat_number"], right_x, row_2 - 24, 14, "F2")
+
+    text("Prix", left_x, row_3, 9, "F1", label_color)
+    text(f"{reservation['amount']:.0f} {settings['currency']}", left_x, row_3 - 24, 12, "F2")
+    text("Telephone", right_x, row_3, 9, "F1", label_color)
+    text(reservation["customer_phone"], right_x, row_3 - 24, 12, "F2")
+
+    commands.append("0.72 0.77 0.83 RG 24 218 m 396 218 l S")
+    text("Agence", 46, 190, 9, "F1", label_color)
+    text(settings["agency_name"], 46, 170, 12, "F2")
+    text(settings["ticket_footer"], 46, 72, 9, "F1", (0.15, 0.20, 0.27))
+    image("QR", 238, 74, 122, 122)
+    text("Scannez pour verifier", 242, 54, 8, "F1", label_color)
+
+    content = "\n".join(commands)
     content_bytes = content.encode("latin-1", "replace")
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 420] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 6 0 R >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 620] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Logo 6 0 R /QR 7 0 R >> >> /Contents 8 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
-        (
-            f"<< /Type /XObject /Subtype /Image /Width {qr_width} /Height {qr_height} "
-            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(qr_stream)} >>"
-        ).encode("ascii") + b"\nstream\n" + qr_stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+        logo_object,
+        qr_object,
         f"<< /Length {len(content_bytes)} >>".encode("ascii") + b"\nstream\n" + content_bytes + b"\nendstream",
     ]
     pdf = bytearray(b"%PDF-1.4\n")

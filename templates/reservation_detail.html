@@ -10,7 +10,50 @@
   <span class="badge {{ reservation.status|lower }}">{{ reservation.status|replace('_', ' ') }}</span>
 </div>
 
-<div class="two-columns">
+<section class="ticket-section ticket-section-main">
+  <div class="ticket-heading">
+    <div>
+      <h2>Billet de voyage</h2>
+      <p>Aperçu prêt pour l'impression ou le téléchargement PDF.</p>
+    </div>
+    <div class="ticket-actions">
+      <a class="button" href="{{ url_for('reservation_ticket_pdf', reservation_id=reservation.id) }}">Télécharger le PDF</a>
+      <button class="button print-button" type="button" onclick="window.print()">Imprimer</button>
+    </div>
+  </div>
+  <article class="ticket ticket-{{ app_settings.paper_size|lower }}">
+    <div class="ticket-brand">
+      <img src="{{ url_for('static', filename='logo.png') }}" alt="">
+      <div>
+        <strong>{{ app_settings.agency_name }}</strong>
+        <small>{{ app_settings.agency_address }}{% if app_settings.agency_phone %} · {{ app_settings.agency_phone }}{% endif %}</small>
+      </div>
+      <span class="badge {{ reservation.status|lower }}">{{ reservation.status|replace('_', ' ') }}</span>
+    </div>
+    <div class="ticket-route"><span>{{ reservation.origin }}</span><b>→</b><span>{{ reservation.destination }}</span></div>
+    <div class="ticket-grid">
+      <div><small>Numéro de billet</small><strong>{{ reservation.ticket_number }}</strong></div>
+      <div><small>Passager</small><strong>{{ reservation.customer_name }}</strong></div>
+      <div><small>Date et heure de départ</small><strong>{{ reservation.departure_at|datefr }}</strong></div>
+      <div><small>Siège</small><strong>{{ reservation.seat_number }}</strong></div>
+      <div><small>Prix</small><strong>{{ '%.0f'|format(reservation.amount) }} {{ app_settings.currency }}</strong></div>
+      <div><small>Téléphone</small><strong>{{ reservation.customer_phone }}</strong></div>
+    </div>
+    <div class="ticket-bottom">
+      <div>
+        <small>Agence</small>
+        <strong>{{ app_settings.agency_name }}</strong>
+        <p>{{ app_settings.ticket_footer }}</p>
+      </div>
+      <div class="ticket-qr">
+        <img src="{{ qr_code }}" alt="QR Code du billet">
+        <small>Scannez pour vérifier</small>
+      </div>
+    </div>
+  </article>
+</section>
+
+<div class="two-columns reservation-info-after-ticket">
   <section class="card">
     <h2>Voyageur</h2>
     <dl>
@@ -68,7 +111,6 @@
   <section class="card">
     <h2>Prochaine action</h2>
     <div class="status-actions">
-      <a class="button" href="{{ url_for('reservation_ticket_pdf', reservation_id=reservation.id) }}">Télécharger le PDF</a>
       {% if reservation.status == 'PAYE' %}
         <form method="post" action="{{ url_for('update_status', reservation_id=reservation.id) }}">
           <input type="hidden" name="status" value="CONFIRME">
@@ -157,48 +199,5 @@
       </tbody>
     </table>
   </div>
-</section>
-
-<section class="ticket-section">
-  <div class="ticket-heading">
-    <div>
-      <h2>Aperçu du billet</h2>
-      <p>Vérifiez les informations avant l'impression.</p>
-    </div>
-    <div class="ticket-actions">
-      <a class="button" href="{{ url_for('reservation_ticket_pdf', reservation_id=reservation.id) }}">PDF</a>
-      <button class="button print-button" type="button" onclick="window.print()">Imprimer</button>
-    </div>
-  </div>
-  <article class="ticket ticket-{{ app_settings.paper_size|lower }}">
-    <div class="ticket-brand">
-      <img src="{{ url_for('static', filename='logo.png') }}" alt="">
-      <div>
-        <strong>{{ app_settings.agency_name }}</strong>
-        <small>{{ app_settings.agency_address }}{% if app_settings.agency_phone %} · {{ app_settings.agency_phone }}{% endif %}</small>
-      </div>
-      <span class="badge {{ reservation.status|lower }}">{{ reservation.status|replace('_', ' ') }}</span>
-    </div>
-    <div class="ticket-route"><span>{{ reservation.origin }}</span><b>→</b><span>{{ reservation.destination }}</span></div>
-    <div class="ticket-grid">
-      <div><small>Numéro de billet</small><strong>{{ reservation.ticket_number }}</strong></div>
-      <div><small>Passager</small><strong>{{ reservation.customer_name }}</strong></div>
-      <div><small>Date et heure de départ</small><strong>{{ reservation.departure_at|datefr }}</strong></div>
-      <div><small>Siège</small><strong>{{ reservation.seat_number }}</strong></div>
-      <div><small>Prix</small><strong>{{ '%.0f'|format(reservation.amount) }} {{ app_settings.currency }}</strong></div>
-      <div><small>Téléphone</small><strong>{{ reservation.customer_phone }}</strong></div>
-    </div>
-    <div class="ticket-bottom">
-      <div>
-        <small>Agence</small>
-        <strong>{{ app_settings.agency_name }}</strong>
-        <p>{{ app_settings.ticket_footer }}</p>
-      </div>
-      <div class="ticket-qr">
-        <img src="{{ qr_code }}" alt="QR Code du billet">
-        <small>Scannez pour vérifier</small>
-      </div>
-    </div>
-  </article>
 </section>
 {% endblock %}
