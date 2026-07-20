@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Messages — Billetterie{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div>
+    <h1>Messages</h1>
+    <p>Annonces internes envoyées par l'administrateur à tous les utilisateurs.</p>
+  </div>
+</div>
+
+{% if current_user.is_admin %}
+<section class="card message-compose">
+  <h2>Nouveau message global</h2>
+  <p>Ce message sera visible par tous les comptes actifs du logiciel.</p>
+  <form class="form-grid" method="post">
+    <label>Titre
+      <input name="title" maxlength="120" required placeholder="Ex. Réunion, consigne, changement d'horaire">
+    </label>
+    <label>Message
+      <textarea name="body" rows="5" maxlength="2000" required placeholder="Écrivez ici l'information à transmettre aux utilisateurs."></textarea>
+    </label>
+    <button class="button" type="submit">Envoyer à tous</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="message-list">
+  {% for message in messages %}
+    <article class="card message-card {% if not message.is_read %}unread{% endif %}">
+      <div class="message-meta">
+        <div>
+          <span class="eyebrow">{{ message.author or 'Administrateur' }}</span>
+          <h2>{{ message.title }}</h2>
+          <small>{{ message.created_at|datefr }}</small>
+        </div>
+        {% if message.is_read %}
+          <span class="badge paye">Lu</span>
+        {% else %}
+          <span class="badge en_attente">Nouveau</span>
+        {% endif %}
+      </div>
+      <p class="message-body">{{ message.body }}</p>
+      <div class="message-actions">
+        {% if not message.is_read %}
+          <form method="post" action="{{ url_for('mark_message_read', message_id=message.id) }}">
+            <button class="button secondary" type="submit">Marquer comme lu</button>
+          </form>
+        {% endif %}
+        {% if current_user.is_admin %}
+          <form method="post" action="{{ url_for('archive_message', message_id=message.id) }}">
+            <button class="link-danger" type="submit">Archiver</button>
+          </form>
+        {% endif %}
+      </div>
+    </article>
+  {% else %}
+    <section class="card">
+      <p class="empty">Aucun message pour le moment.</p>
+    </section>
+  {% endfor %}
+</section>
+{% endblock %}

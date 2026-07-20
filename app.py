@@ -150,6 +150,24 @@ def get_db() -> sqlite3.Connection:
                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                )"""
         )
+        g.db.execute(
+            """CREATE TABLE IF NOT EXISTS announcements (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   title TEXT NOT NULL,
+                   body TEXT NOT NULL,
+                   created_by INTEGER NOT NULL REFERENCES users(id),
+                   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
+        g.db.execute(
+            """CREATE TABLE IF NOT EXISTS announcement_reads (
+                   announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+                   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                   read_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   PRIMARY KEY (announcement_id, user_id)
+               )"""
+        )
         g.db.commit()
     return g.db
 
@@ -198,6 +216,23 @@ def audit(action: str, details: str = "") -> None:
     )
 
 
+def unread_announcement_count() -> int:
+    """Compte les annonces actives non lues par l'utilisateur connecte."""
+    if getattr(g, "user", None) is None:
+        return 0
+    row = get_db().execute(
+        """SELECT COUNT(*) AS total
+           FROM announcements a
+           WHERE a.is_active = 1
+             AND NOT EXISTS (
+               SELECT 1 FROM announcement_reads ar
+               WHERE ar.announcement_id = a.id AND ar.user_id = ?
+             )""",
+        (g.user["id"],),
+    ).fetchone()
+    return int(row["total"] if row else 0)
+
+
 def csrf_token() -> str:
     """Crée le jeton CSRF associé à la session courante."""
     if "csrf_token" not in session:
@@ -240,7 +275,12 @@ def load_logged_in_user():
 @app.context_processor
 def inject_current_user():
     """Rend le compte courant disponible dans les gabarits Jinja."""
-    return {"current_user": getattr(g, "user", None), "app_settings": get_settings(), "csrf_token": csrf_token}
+    return {
+        "current_user": getattr(g, "user", None),
+        "app_settings": get_settings(),
+        "csrf_token": csrf_token,
+        "unread_messages": unread_announcement_count(),
+    }
 
 
 def login_required(view):
@@ -1349,6 +1389,78 @@ def new_reservation():
     # Seuls les départs encore à venir sont proposés dans le formulaire.
     trips_list = db.execute("SELECT * FROM trips WHERE departure_at >= datetime('now') ORDER BY departure_at").fetchall()
     return render_template("reservation_form.html", trips=trips_list)
+
+
+@app.route("/messages", methods=["GET", "POST"])
+@login_required
+def messages():
+    """Affiche les annonces internes et permet a l'administrateur d'en envoyer une a tous."""
+    db = get_db()
+    if request.method == "POST":
+        if not g.user["is_admin"]:
+            abort(403)
+        title = request.form.get("title", "").strip()
+        body = request.form.get("body", "").strip()
+        if len(title) < 3 or len(title) > 120 or len(body) < 5 or len(body) > 2000:
+            flash("Le titre ou le message est invalide.", "error")
+        else:
+            cursor = db.execute(
+                "INSERT INTO announcements (title, body, created_by) VALUES (?, ?, ?)",
+                (title, body, g.user["id"]),
+            )
+            db.execute(
+                "INSERT OR IGNORE INTO announcement_reads (announcement_id, user_id) VALUES (?, ?)",
+                (cursor.lastrowid, g.user["id"]),
+            )
+            audit("ANNOUNCEMENT_SENT", title)
+            db.commit()
+            flash("Message envoyé à tous les utilisateurs.", "success")
+            return redirect(url_for("messages"))
+
+    rows = db.execute(
+        """SELECT a.*, users.username AS author,
+                  CASE WHEN ar.read_at IS NULL THEN 0 ELSE 1 END AS is_read
+           FROM announcements a
+           LEFT JOIN users ON users.id = a.created_by
+           LEFT JOIN announcement_reads ar
+             ON ar.announcement_id = a.id AND ar.user_id = ?
+           WHERE a.is_active = 1
+           ORDER BY a.created_at DESC LIMIT 100""",
+        (g.user["id"],),
+    ).fetchall()
+    return render_template("messages.html", messages=rows)
+
+
+@app.post("/messages/<int:message_id>/read")
+@login_required
+def mark_message_read(message_id: int):
+    """Marque une annonce comme lue pour l'utilisateur connecte."""
+    db = get_db()
+    message = db.execute("SELECT id FROM announcements WHERE id = ? AND is_active = 1", (message_id,)).fetchone()
+    if message is None:
+        abort(404)
+    db.execute(
+        "INSERT OR IGNORE INTO announcement_reads (announcement_id, user_id) VALUES (?, ?)",
+        (message_id, g.user["id"]),
+    )
+    db.commit()
+    flash("Message marqué comme lu.", "success")
+    return redirect(url_for("messages"))
+
+
+@app.post("/messages/<int:message_id>/archive")
+@admin_required
+def archive_message(message_id: int):
+    """Masque une annonce interne pour tous les utilisateurs."""
+    db = get_db()
+    message = db.execute("SELECT title FROM announcements WHERE id = ?", (message_id,)).fetchone()
+    if message is None:
+        abort(404)
+    db.execute("UPDATE announcements SET is_active = 0 WHERE id = ?", (message_id,))
+    audit("ANNOUNCEMENT_ARCHIVED", message["title"])
+    db.commit()
+    flash("Message archivé.", "success")
+    return redirect(url_for("messages"))
 
 
 @app.route("/reservations/<int:reservation_id>")

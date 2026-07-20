@@ -112,3 +112,21 @@ CREATE TABLE IF NOT EXISTS payment_requests (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Annonces internes envoyées par l'administrateur à tous les utilisateurs.
+CREATE TABLE IF NOT EXISTS announcements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Lecture des annonces par utilisateur.
+CREATE TABLE IF NOT EXISTS announcement_reads (
+    announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    read_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (announcement_id, user_id)
+);
