@@ -75,8 +75,10 @@ dd { margin:0; }
 .settings-save { justify-self:start; }
 .settings-user-button { margin-top:16px; }
 .ticket-section { margin-top:24px; }
-.ticket-section-main { margin-bottom:24px; }
-.reservation-info-after-ticket { margin-top:0; }
+.reservation-ticket-layout { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr); gap:18px; align-items:start; margin-bottom:24px; }
+.ticket-preview-panel .ticket { max-width:none; }
+.reservation-side-panel { display:grid; gap:18px; }
+.reservation-side-panel .card { box-shadow:0 8px 24px #15223510; }
 .ticket-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
 .ticket-heading p { margin:4px 0 0; }
 .ticket { max-width:800px; margin:auto; background:#fff; border:1px solid #cad5e1; border-radius:14px; overflow:hidden; box-shadow:0 8px 26px #15223518; }
@@ -115,6 +117,7 @@ dd { margin:0; }
   header { padding:14px 5%; display:block; }
   nav { margin-top:12px; gap:10px; font-size:.85rem; flex-wrap:wrap; }
   .stats, .two-columns { grid-template-columns:1fr; }
+  .reservation-ticket-layout { grid-template-columns:1fr; }
   .dashboard-grid { grid-template-columns:1fr; }.report-filters,.report-summary { grid-template-columns:1fr; }
   .reservation-filters { grid-template-columns:1fr; }.manifest-meta { display:grid; gap:6px; }
   .scanner-grid { grid-template-columns:1fr; }.camera-box { min-height:320px; }.manual-scan { grid-template-columns:1fr; }
@@ -135,6 +138,8 @@ dd { margin:0; }
   body:not(.receipt-page):not(.reports-page) > header, body:not(.receipt-page):not(.reports-page) > .site-footer, body:not(.receipt-page):not(.reports-page) main > :not(.ticket-section), .ticket-heading { display:none!important; }
   main { max-width:none; margin:0; padding:0; }
   .ticket-section { margin:0; }
+  .reservation-ticket-layout { display:block; }
+  .reservation-side-panel { display:none!important; }
   .ticket { max-width:100%; border:1px solid #777; box-shadow:none; break-inside:avoid; }
   .ticket-80mm { width:80mm; margin:auto; }
   .receipt-page header, .receipt-page .receipt-actions { display:none!important; }.receipt-page .receipt { max-width:100%; border:0; box-shadow:none; }
